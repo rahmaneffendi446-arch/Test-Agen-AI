@@ -1,16 +1,11 @@
 /**
  * wallet.js — KriptoEdu Wallet Connector
- * Mendukung MetaMask (browser extension) +
- * WalletConnect via walletconnect.js (QR mobile)
+ * Mendukung MetaMask + WalletConnect (via walletconnect.js)
  *
- * Fitur:
- *  - Deteksi MetaMask / injected wallet
- *  - Wallet picker modal (MetaMask vs WalletConnect)
- *  - Connect & Disconnect wallet
- *  - Tampilkan alamat singkat (0x1234...abcd)
- *  - Handle: connected / not installed / wrong network
- *  - Toast notification feedback
- *  - Persist state via sessionStorage
+ * Bug fixes (RAH-13):
+ *  - MetaMask di mobile browser → pakai deep link, bukan redirect ke download
+ *  - Deteksi: in-app wallet browser vs regular mobile browser
+ *  - Picker modal mobile-aware (highlight opsi yang relevan)
  */
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
@@ -25,15 +20,49 @@ let walletState = {
   provider:    null, // 'metamask' | 'walletconnect' | null
 };
 
-// ─── UTILS ───────────────────────────────────────────────────────────────────
+// ─── DEVICE / ENVIRONMENT DETECTION ─────────────────────────────────────────
 
-function shortenAddress(addr) {
-  if (!addr) return '';
-  return addr.slice(0, 6) + '...' + addr.slice(-4);
+/** Apakah user di perangkat mobile? */
+function isMobile() {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 }
 
+/** Apakah ada injected wallet provider (MetaMask extension / in-app browser)? */
+function hasInjectedProvider() {
+  return typeof window.ethereum !== 'undefined';
+}
+
+/** Apakah MetaMask extension / in-app browser aktif? */
 function isMetaMaskInstalled() {
-  return typeof window.ethereum !== 'undefined' && window.ethereum.isMetaMask;
+  return hasInjectedProvider() && !!window.ethereum.isMetaMask;
+}
+
+/** Apakah browser ini adalah MetaMask in-app browser di HP? */
+function isMetaMaskMobileBrowser() {
+  return isMobile() && isMetaMaskInstalled();
+}
+
+// ─── MOBILE DEEP LINK ────────────────────────────────────────────────────────
+
+/**
+ * Buka MetaMask app via deep link universal.
+ * Jika app terinstall → langsung buka dApp di dalam MetaMask browser.
+ * Jika belum → App Store / Play Store (bukan halaman download web biasa).
+ *
+ * Format: https://metamask.app.link/dapp/{host}{pathname}
+ */
+function openMetaMaskDeepLink() {
+  // Bersihkan trailing slash supaya URL rapi
+  const host     = window.location.host;
+  const pathname = window.location.pathname.replace(/\/$/, '') || '/';
+  const deepLink = `https://metamask.app.link/dapp/${host}${pathname}`;
+
+  if (typeof showToast === 'function') {
+    showToast('Membuka MetaMask app... 🦊', 'info');
+  }
+
+  // Delay singkat agar toast sempat muncul sebelum navigasi
+  setTimeout(() => { window.location.href = deepLink; }, 400);
 }
 
 // ─── TOAST NOTIFICATION ──────────────────────────────────────────────────────
@@ -41,8 +70,8 @@ function isMetaMaskInstalled() {
 let toastTimeout;
 
 function showToast(message, type = 'info') {
-  const toast    = document.getElementById('wallet-toast');
-  const toastMsg = document.getElementById('wallet-toast-msg');
+  const toast     = document.getElementById('wallet-toast');
+  const toastMsg  = document.getElementById('wallet-toast-msg');
   const toastIcon = document.getElementById('wallet-toast-icon');
   if (!toast) return;
 
@@ -55,7 +84,7 @@ function showToast(message, type = 'info') {
   const c = config[type] || config.info;
 
   toast.className = `fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-5 py-3 rounded-2xl border backdrop-blur-md shadow-xl transition-all duration-300 ${c.bg} ${c.border}`;
-  toastMsg.className = `text-sm font-semibold ${c.text}`;
+  toastMsg.className    = `text-sm font-semibold ${c.text}`;
   toastIcon.textContent = c.icon;
   toastMsg.textContent  = message;
   toast.style.opacity       = '1';
@@ -84,11 +113,13 @@ function updateWalletUI() {
   if (!btn) return;
 
   if (walletState.isConnected && walletState.address) {
-    const isWC    = walletState.provider === 'walletconnect';
-    const dotColor = isWC ? 'bg-blue-400 group-hover:bg-red-400' : 'bg-green-400 group-hover:bg-red-400';
+    const isWC = walletState.provider === 'walletconnect';
     const borderColor = isWC
       ? 'border border-blue-500/40 hover:border-red-500/40 text-blue-400 hover:text-red-400 bg-blue-500/10 hover:bg-red-500/15'
       : 'border border-green-500/40 hover:border-red-500/40 text-green-400 hover:text-red-400 bg-green-500/15 hover:bg-red-500/15';
+    const dotColor = isWC
+      ? 'bg-blue-400 group-hover:bg-red-400'
+      : 'bg-green-400 group-hover:bg-red-400';
 
     btn.className = `hidden md:inline-flex items-center gap-2 ${borderColor} text-sm font-semibold px-4 py-2 rounded-full transition-all duration-200 cursor-pointer group`;
     btnLabel.innerHTML = `
@@ -113,18 +144,36 @@ function updateWalletUI() {
   }
 }
 
-// ─── METAMASK CONNECT ────────────────────────────────────────────────────────
+// ─── METAMASK CONNECT ─────────────────────────────────────────────────────────
+
+function shortenAddress(addr) {
+  if (!addr) return '';
+  return addr.slice(0, 6) + '...' + addr.slice(-4);
+}
 
 /**
- * Hubungkan wallet MetaMask (browser extension)
+ * Hubungkan wallet MetaMask.
+ *
+ * Alur:
+ *  1. Mobile browser biasa (tidak ada window.ethereum)
+ *     → Pakai MetaMask universal deep link (buka app atau toko)
+ *  2. MetaMask in-app browser / desktop extension
+ *     → eth_requestAccounts normal
  */
 async function connectWallet() {
-  if (!isMetaMaskInstalled()) {
-    showToast('MetaMask belum terinstall! Install dulu di metamask.io 🦊', 'warning');
-    setTimeout(() => window.open('https://metamask.io/download/', '_blank'), 1500);
+  // ── CASE 1: Mobile browser biasa, MetaMask belum inject ──
+  if (isMobile() && !hasInjectedProvider()) {
+    openMetaMaskDeepLink();
     return;
   }
 
+  // ── CASE 2: Ada provider tapi bukan MetaMask (misalnya Coinbase Wallet) ──
+  if (hasInjectedProvider() && !isMetaMaskInstalled()) {
+    showToast('Provider wallet terdeteksi tapi bukan MetaMask. Coba WalletConnect! 🔗', 'warning');
+    return;
+  }
+
+  // ── CASE 3: Desktop extension atau MetaMask in-app browser ──
   const btn = document.getElementById('wallet-btn');
   if (btn) {
     btn.disabled = true;
@@ -149,13 +198,13 @@ async function connectWallet() {
     updateWalletUI();
 
     if (chainId !== SUPPORTED_CHAIN_ID) {
-      showToast(`Wallet terhubung di jaringan lain (bukan ${SUPPORTED_CHAIN_NAME}). Pastikan network sudah benar.`, 'warning');
+      showToast(`Wallet terhubung di jaringan lain. Ganti ke ${SUPPORTED_CHAIN_NAME} ya! ⚠️`, 'warning');
     } else {
-      showToast(`🦊 Wallet terhubung via MetaMask! ${shortenAddress(accounts[0])} ✨`, 'success');
+      showToast(`🦊 MetaMask terhubung! ${shortenAddress(accounts[0])} ✨`, 'success');
     }
   } catch (err) {
     if (err.code === 4001) {
-      showToast('Koneksi dibatalkan. Kamu harus setujui permintaan di MetaMask ya! 😅', 'warning');
+      showToast('Koneksi dibatalkan oleh user. 😅', 'warning');
     } else {
       showToast('Gagal terhubung: ' + (err.message || 'Error tidak diketahui'), 'error');
     }
@@ -166,13 +215,13 @@ async function connectWallet() {
 }
 
 /**
- * Putuskan koneksi MetaMask
+ * Putuskan koneksi wallet.
+ * Jika provider adalah WalletConnect → delegate ke walletconnect.js
  */
 function disconnectWallet() {
   const prevAddress = walletState.address;
   const wasWC       = walletState.provider === 'walletconnect';
 
-  // Jika WalletConnect, delegasikan ke walletconnect.js
   if (wasWC && typeof disconnectWalletConnect === 'function') {
     disconnectWalletConnect();
     return;
@@ -188,30 +237,28 @@ function disconnectWallet() {
   sessionStorage.removeItem('wallet_provider');
 
   updateWalletUI();
-  showToast(`Wallet ${shortenAddress(prevAddress)} berhasil disconnect. Sampai jumpa! 👋`, 'info');
+  showToast(`Wallet ${shortenAddress(prevAddress)} berhasil disconnect. 👋`, 'info');
 }
 
 /**
- * Klik tombol wallet → tampilkan picker dulu
+ * Klik tombol wallet:
+ *  - Sudah connect → disconnect
+ *  - Belum connect → buka wallet picker
  */
 function handleWalletButtonClick() {
   if (walletState.isConnected) {
     disconnectWallet();
+  } else if (typeof openWalletPickerModal === 'function') {
+    openWalletPickerModal();
   } else {
-    // Buka wallet picker modal (MetaMask | WalletConnect)
-    if (typeof openWalletPickerModal === 'function') {
-      openWalletPickerModal();
-    } else {
-      // Fallback: langsung ke MetaMask
-      connectWallet();
-    }
+    connectWallet();
   }
 }
 
-// ─── EVENT LISTENERS (MetaMask) ──────────────────────────────────────────────
+// ─── EVENT LISTENERS (MetaMask) ───────────────────────────────────────────────
 
 function setupMetaMaskListeners() {
-  if (!isMetaMaskInstalled()) return;
+  if (!hasInjectedProvider()) return;
 
   window.ethereum.on('accountsChanged', (accounts) => {
     if (walletState.provider !== 'metamask') return;
@@ -229,9 +276,9 @@ function setupMetaMaskListeners() {
     if (walletState.provider !== 'metamask') return;
     walletState.chainId = chainId;
     if (chainId !== SUPPORTED_CHAIN_ID) {
-      showToast(`Jaringan berubah! Gunakan ${SUPPORTED_CHAIN_NAME} untuk pengalaman terbaik. ⚠️`, 'warning');
+      showToast(`Jaringan berubah! Gunakan ${SUPPORTED_CHAIN_NAME}. ⚠️`, 'warning');
     } else {
-      showToast('Jaringan berhasil diganti ke Ethereum Mainnet ✅', 'success');
+      showToast('Beralih ke Ethereum Mainnet ✅', 'success');
     }
   });
 }
@@ -239,26 +286,28 @@ function setupMetaMaskListeners() {
 // ─── RESTORE SESSION ─────────────────────────────────────────────────────────
 
 async function restoreWalletSession() {
-  const wasConnected = sessionStorage.getItem('wallet_connected');
-  const savedAddress = sessionStorage.getItem('wallet_address');
+  const wasConnected  = sessionStorage.getItem('wallet_connected');
+  const savedAddress  = sessionStorage.getItem('wallet_address');
   const savedProvider = sessionStorage.getItem('wallet_provider');
 
-  // WalletConnect restore → delegasikan ke walletconnect.js
+  if (!wasConnected || !savedAddress) return;
+
+  // WalletConnect restore → delegate ke walletconnect.js
   if (savedProvider === 'walletconnect') {
-    // Sedikit delay agar walletconnect.js sudah di-load
     setTimeout(async () => {
       if (typeof restoreWalletConnectSession === 'function') {
         await restoreWalletConnectSession();
       }
-    }, 200);
+    }, 300);
     return;
   }
 
   // MetaMask restore
-  if (wasConnected && savedAddress && isMetaMaskInstalled()) {
+  if (isMetaMaskInstalled()) {
     try {
       const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-      if (accounts && accounts.length > 0 && accounts[0].toLowerCase() === savedAddress.toLowerCase()) {
+      if (accounts && accounts.length > 0 &&
+          accounts[0].toLowerCase() === savedAddress.toLowerCase()) {
         const chainId = await window.ethereum.request({ method: 'eth_chainId' });
         walletState.address     = accounts[0];
         walletState.chainId     = chainId;
