@@ -1,13 +1,13 @@
 /**
  * donation.js — KriptoEdu Crypto Tip Jar
- * Fitur donasi ETH langsung via MetaMask.
+ * Update RAH-14: sendDonation() kini pakai ethers.js signer dari walletState
  *
  * Fitur:
  *  - Modal Tip Jar yang cantik
  *  - Pilihan nominal preset (0.001 / 0.005 / 0.01 ETH) + input custom
- *  - Kirim ETH langsung ke alamat penerima via window.ethereum
- *  - Status transaksi real-time (pending → confirmed / failed)
- *  - Riwayat donasi di session (donor list)
+ *  - Kirim ETH via ethers.js (Web3Modal) atau fallback raw provider
+ *  - Status transaksi real-time (pending -> confirmed / failed)
+ *  - Riwayat donasi di session
  *  - Animasi konfeti saat berhasil donate 🎉
  *  - Toast notification terintegrasi dengan wallet.js
  */
@@ -21,9 +21,9 @@ const RECIPIENT_LABEL = 'KriptoEdu Fund';
 
 /** Preset nominal donasi dalam ETH */
 const DONATION_PRESETS = [
-  { label: '☕ Kopi',   eth: '0.001', desc: '~Rp 4rb' },
-  { label: '🍜 Makan', eth: '0.005', desc: '~Rp 20rb' },
-  { label: '🚀 Super', eth: '0.01',  desc: '~Rp 40rb' },
+  { label: '\u2615 Kopi',   eth: '0.001', desc: '~Rp 4rb'  },
+  { label: '\ud83c\udf5c Makan', eth: '0.005', desc: '~Rp 20rb' },
+  { label: '\ud83d\ude80 Super', eth: '0.01',  desc: '~Rp 40rb' },
 ];
 
 // ─── STATE ────────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ let isModalOpen     = false;
 
 // ─── UTILS ────────────────────────────────────────────────────────────────
 
-/** Konversi ETH ke Wei (hex string) */
+/** Konversi ETH ke Wei hex string (fallback jika ethers.js tidak tersedia) */
 function ethToHex(eth) {
   const wei = BigInt(Math.round(parseFloat(eth) * 1e18));
   return '0x' + wei.toString(16);
@@ -50,9 +50,9 @@ function fmtTime(ts) {
   return new Date(ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 }
 
-/** Cek wallet tersambung */
+/** Cek wallet tersambung (membaca walletState dari wallet.js) */
 function isWalletConnected() {
-  return typeof walletState !== 'undefined' && walletState.isConnected && walletState.address;
+  return typeof walletState !== 'undefined' && walletState.isConnected && !!walletState.address;
 }
 
 // ─── MODAL ────────────────────────────────────────────────────────────────
@@ -112,7 +112,6 @@ function onCustomInput(val) {
   const parsed = parseFloat(val);
   if (!isNaN(parsed) && parsed > 0) {
     selectedAmount = parsed.toString();
-    // Deselect semua preset
     document.querySelectorAll('.preset-btn').forEach(btn => {
       btn.className = btn.className
         .replace('bg-crypto-gold/20 border-crypto-gold text-crypto-gold',
@@ -130,13 +129,13 @@ function updateDonateButton() {
   if (!btn) return;
 
   if (!isWalletConnected()) {
-    btn.disabled = true;
-    btn.textContent = '🔗 Connect Wallet Dulu';
-    btn.className = 'w-full py-4 rounded-xl font-black text-lg bg-slate-700 text-slate-500 cursor-not-allowed transition';
+    btn.disabled    = true;
+    btn.textContent = '\ud83d\udd17 Connect Wallet Dulu';
+    btn.className   = 'w-full py-4 rounded-xl font-black text-lg bg-slate-700 text-slate-500 cursor-not-allowed transition';
     if (note) note.classList.remove('hidden');
   } else {
-    btn.disabled = false;
-    btn.innerHTML = `<span>💛 Kirim ${selectedAmount} ETH</span>`;
+    btn.disabled  = false;
+    btn.innerHTML = `<span>\ud83d\udc9b Kirim ${selectedAmount} ETH</span>`;
     btn.className = 'w-full py-4 rounded-xl font-black text-lg bg-gradient-to-r from-crypto-gold to-yellow-400 text-crypto-dark hover:opacity-90 transition cursor-pointer';
     if (note) note.classList.add('hidden');
   }
@@ -146,57 +145,75 @@ function updateDonateButton() {
 
 async function sendDonation() {
   if (!isWalletConnected()) {
-    if (typeof showToast === 'function') showToast('Connect wallet dulu ya! 🔗', 'warning');
+    if (typeof showToast === 'function') showToast('Connect wallet dulu ya! \ud83d\udd17', 'warning');
     return;
   }
 
-  const amount = document.getElementById('donation-custom')?.value || selectedAmount;
+  const customVal = document.getElementById('donation-custom')?.value?.trim();
+  const amount    = (customVal && customVal !== '') ? customVal : selectedAmount;
   const parsedAmt = parseFloat(amount);
+
   if (isNaN(parsedAmt) || parsedAmt <= 0) {
     if (typeof showToast === 'function') showToast('Nominal donasi tidak valid!', 'error');
     return;
   }
 
-  setTxStatus('pending', `Mengirim ${parsedAmt} ETH... Konfirmasi di MetaMask kamu 🦊`);
+  setTxStatus('pending', `Mengirim ${parsedAmt} ETH\u2026 Konfirmasi di wallet kamu \ud83d\udd17`);
 
   try {
-    const txHash = await window.ethereum.request({
-      method: 'eth_sendTransaction',
-      params: [{
-        from:  walletState.address,
-        to:    DONATION_RECIPIENT,
-        value: ethToHex(parsedAmt.toString()),
-        gas:   '0x5208', // 21000 gas (standard ETH transfer)
-      }],
-    });
+    let txHash;
 
-    // Tambah ke riwayat
-    const entry = {
-      hash:    txHash,
-      amount:  parsedAmt,
-      from:    walletState.address,
-      time:    Date.now(),
-    };
+    // ── Path A: Ethers.js via Web3Modal (rekomendasi) ──
+    if (walletState.ethersProvider && window.ethers) {
+      const signer = walletState.ethersProvider.getSigner();
+      const tx     = await signer.sendTransaction({
+        to:    DONATION_RECIPIENT,
+        value: window.ethers.utils.parseEther(parsedAmt.toString()),
+      });
+      txHash = tx.hash;
+
+      setTxStatus('pending', `TX terkirim, menunggu konfirmasi blockchain\u2026 \u23f3`);
+      await tx.wait(1); // Tunggu 1 blok konfirmasi
+
+    // ── Path B: Fallback raw window.ethereum ──
+    } else if (window.ethereum) {
+      txHash = await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from:  walletState.address,
+          to:    DONATION_RECIPIENT,
+          value: ethToHex(parsedAmt.toString()),
+          gas:   '0x5208',
+        }],
+      });
+
+    } else {
+      throw new Error('Tidak ada provider wallet yang tersedia.');
+    }
+
+    // ── Sukses ──
+    const entry = { hash: txHash, amount: parsedAmt, from: walletState.address, time: Date.now() };
     donationHistory.unshift(entry);
 
     setTxStatus('success', txHash, parsedAmt);
     renderHistory();
     launchConfetti();
-
-    if (typeof showToast === 'function') {
-      showToast(`Makasih banyak! Donasi ${parsedAmt} ETH berhasil dikirim 💛`, 'success');
-    }
-
-    // Update counter di halaman utama
     updateDonationCounter(donationHistory.length);
 
+    if (typeof showToast === 'function') {
+      showToast(`Makasih banyak! Donasi ${parsedAmt} ETH berhasil \ud83d\udc9b`, 'success');
+    }
+
   } catch (err) {
-    if (err.code === 4001) {
+    // Ethers.js reject code: ACTION_REJECTED, atau MetaMask 4001
+    if (err?.code === 4001 || err?.code === 'ACTION_REJECTED' || err?.action === 'sendTransaction') {
       setTxStatus('cancelled');
-      if (typeof showToast === 'function') showToast('Transaksi dibatalkan. No worries! 😊', 'warning');
+      if (typeof showToast === 'function') showToast('Transaksi dibatalkan. No worries! \ud83d\ude0a', 'warning');
     } else {
-      setTxStatus('failed', err.message);
-      if (typeof showToast === 'function') showToast('Transaksi gagal: ' + (err.message || 'Error tidak diketahui'), 'error');
+      const msg = err?.reason || err?.message || 'Error tidak diketahui';
+      setTxStatus('failed', msg);
+      if (typeof showToast === 'function') showToast('Transaksi gagal: ' + msg, 'error');
+      console.error('[donation.js] sendDonation error:', err);
     }
   }
 }
@@ -221,35 +238,31 @@ function setTxStatus(status, data = '', amount = 0) {
     success: {
       cls:  'bg-green-500/10 border-green-500/30',
       html: `<div class="space-y-2">
-               <p class="text-green-400 font-black text-lg">🎉 Donasi Berhasil! ${amount} ETH</p>
-               <p class="text-slate-400 text-xs font-mono break-all">TX: <a href="https://etherscan.io/tx/${data}" target="_blank" class="text-crypto-blue hover:underline">${data.slice(0,20)}...${data.slice(-8)}</a></p>
-               <p class="text-slate-500 text-xs">Lihat di <a href="https://etherscan.io/tx/${data}" target="_blank" class="text-crypto-blue hover:underline">Etherscan</a> ↗</p>
+               <p class="text-green-400 font-black text-lg">\ud83c\udf89 Donasi Berhasil! ${amount} ETH</p>
+               <p class="text-slate-400 text-xs font-mono break-all">TX: <a href="https://etherscan.io/tx/${data}" target="_blank" class="text-crypto-blue hover:underline">${String(data).slice(0,20)}...${String(data).slice(-8)}</a></p>
+               <p class="text-slate-500 text-xs">Lihat di <a href="https://etherscan.io/tx/${data}" target="_blank" class="text-crypto-blue hover:underline">Etherscan</a> \u2197</p>
              </div>`,
     },
     failed: {
       cls:  'bg-red-500/10 border-red-500/30',
-      html: `<p class="text-red-400 text-sm font-semibold">❌ Gagal: ${data}</p>`,
+      html: `<p class="text-red-400 text-sm font-semibold">\u274c Gagal: ${data}</p>`,
     },
     cancelled: {
       cls:  'bg-slate-500/10 border-slate-500/30',
-      html: `<p class="text-slate-400 text-sm">↩️ Transaksi dibatalkan.</p>`,
+      html: `<p class="text-slate-400 text-sm">\u21a9\ufe0f Transaksi dibatalkan.</p>`,
     },
   };
 
   const c = configs[status];
   if (!c) return;
-
   box.className = `rounded-xl border p-4 mt-4 ${c.cls}`;
-  box.innerHTML  = c.html;
+  box.innerHTML = c.html;
   box.classList.remove('hidden');
 }
 
 function resetTxStatus() {
   const box = document.getElementById('tx-status-box');
-  if (box) {
-    box.innerHTML = '';
-    box.classList.add('hidden');
-  }
+  if (box) { box.innerHTML = ''; box.classList.add('hidden'); }
 }
 
 // ─── DONATION HISTORY ─────────────────────────────────────────────────────
@@ -257,16 +270,14 @@ function resetTxStatus() {
 function renderHistory() {
   const list = document.getElementById('donation-history');
   if (!list) return;
-
   if (donationHistory.length === 0) {
-    list.innerHTML = '<p class="text-slate-600 text-xs text-center py-2">Belum ada donasi hari ini. Jadilah yang pertama! 🌟</p>';
+    list.innerHTML = '<p class="text-slate-600 text-xs text-center py-2">Belum ada donasi hari ini. Jadilah yang pertama! \ud83c\udf1f</p>';
     return;
   }
-
   list.innerHTML = donationHistory.slice(0, 5).map(d => `
     <div class="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
       <div class="flex items-center gap-2">
-        <span class="text-lg">💛</span>
+        <span class="text-lg">\ud83d\udc9b</span>
         <div>
           <p class="text-white text-xs font-semibold">${shortAddr(d.from)}</p>
           <p class="text-slate-500 text-xs">${fmtTime(d.time)}</p>
@@ -277,35 +288,31 @@ function renderHistory() {
   `).join('');
 }
 
-// ─── DONATION COUNTER (di card fitur halaman utama) ──────────────────────
+// ─── COUNTER ──────────────────────────────────────────────────────────────
 
 function updateDonationCounter(count) {
   const el = document.getElementById('donation-count');
   if (el) el.textContent = count;
 }
 
-// ─── CONFETTI 🎉 ──────────────────────────────────────────────────────────
+// ─── CONFETTI \ud83c\udf89 ──────────────────────────────────────────────────────────────
 
 function launchConfetti() {
-  const colors = ['#F59E0B', '#7C3AED', '#1DA1F2', '#10B981', '#F472B6'];
-  const canvas  = document.createElement('canvas');
+  const colors = ['#F59E0B','#7C3AED','#1DA1F2','#10B981','#F472B6'];
+  const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99999';
   document.body.appendChild(canvas);
-  const ctx    = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d');
   canvas.width  = window.innerWidth;
   canvas.height = window.innerHeight;
-
   const particles = Array.from({ length: 120 }, () => ({
-    x:    Math.random() * canvas.width,
-    y:    Math.random() * -canvas.height,
-    r:    Math.random() * 6 + 3,
-    d:    Math.random() * 2 + 1,
+    x: Math.random() * canvas.width,
+    y: Math.random() * -canvas.height,
+    r: Math.random() * 6 + 3,
+    d: Math.random() * 2 + 1,
     color: colors[Math.floor(Math.random() * colors.length)],
-    tilt: Math.random() * 10 - 5,
-    tiltAngle: 0,
-    tiltSpeed: Math.random() * 0.1 + 0.05,
+    tilt: 0, tiltAngle: 0, tiltSpeed: Math.random() * 0.1 + 0.05,
   }));
-
   let frame = 0;
   function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -315,14 +322,13 @@ function launchConfetti() {
       p.x += Math.sin(p.tiltAngle) * 2;
       p.tilt = Math.sin(p.tiltAngle) * 15;
       ctx.beginPath();
-      ctx.lineWidth = p.r;
+      ctx.lineWidth   = p.r;
       ctx.strokeStyle = p.color;
       ctx.moveTo(p.x + p.tilt + p.r / 2, p.y);
       ctx.lineTo(p.x + p.tilt, p.y + p.tilt + p.r / 2);
       ctx.stroke();
     });
-    frame++;
-    if (frame < 180) requestAnimationFrame(draw);
+    if (++frame < 180) requestAnimationFrame(draw);
     else canvas.remove();
   }
   draw();
@@ -332,96 +338,63 @@ function launchConfetti() {
 
 function injectDonationModal() {
   if (document.getElementById('donation-modal')) return;
-
   const modal = document.createElement('div');
   modal.id = 'donation-modal';
   modal.className = 'hidden fixed inset-0 z-[10000] items-center justify-center bg-black/70 backdrop-blur-sm px-4';
   modal.innerHTML = `
-    <!-- Backdrop close -->
     <div class="absolute inset-0" onclick="closeDonationModal()"></div>
-
-    <!-- Modal card -->
     <div class="relative bg-[#0F172A] border border-white/10 rounded-3xl w-full max-w-md shadow-2xl p-8 z-10">
-
-      <!-- Header -->
       <div class="flex items-center justify-between mb-6">
         <div>
-          <h3 class="text-2xl font-black">💛 Tip Jar Kripto</h3>
+          <h3 class="text-2xl font-black">\ud83d\udc9b Tip Jar Kripto</h3>
           <p class="text-slate-400 text-sm mt-1">Dukung KriptoEdu dengan donasi ETH-mu!</p>
         </div>
-        <button onclick="closeDonationModal()" class="text-slate-500 hover:text-white text-2xl leading-none transition">×</button>
+        <button onclick="closeDonationModal()" class="text-slate-500 hover:text-white text-2xl leading-none transition">\u00d7</button>
       </div>
-
-      <!-- Recipient -->
       <div class="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3 mb-6 border border-white/5">
-        <span class="text-2xl">🏦</span>
+        <span class="text-2xl">\ud83c\udfe6</span>
         <div class="flex-1 min-w-0">
           <p class="text-xs text-slate-500 font-semibold uppercase tracking-wide">Penerima</p>
           <p class="text-white font-bold">${RECIPIENT_LABEL}</p>
           <p class="text-slate-500 text-xs font-mono truncate">${DONATION_RECIPIENT}</p>
         </div>
       </div>
-
-      <!-- Preset buttons -->
       <p class="text-slate-400 text-xs font-semibold uppercase tracking-wide mb-3">Pilih Nominal</p>
       <div id="donation-presets" class="grid grid-cols-3 gap-3 mb-4"></div>
-
-      <!-- Custom amount -->
       <div class="relative mb-4">
-        <input
-          id="donation-custom"
-          type="number"
-          step="0.001"
-          min="0.0001"
+        <input id="donation-custom" type="number" step="0.001" min="0.0001"
           placeholder="Atau ketik jumlah custom (ETH)"
           oninput="onCustomInput(this.value)"
-          class="w-full bg-[#1E293B] border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-crypto-gold/50 transition"
-        />
+          class="w-full bg-[#1E293B] border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-crypto-gold/50 transition" />
         <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">ETH</span>
       </div>
-
-      <!-- Wallet note -->
       <div id="donate-wallet-note" class="mb-4 flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/20 rounded-xl px-4 py-3">
-        <span>⚠️</span>
+        <span>\u26a0\ufe0f</span>
         <p class="text-yellow-300 text-xs">Connect wallet dulu di navbar ya sebelum donasi!</p>
       </div>
-
-      <!-- Submit button -->
-      <button
-        id="donate-submit-btn"
-        onclick="sendDonation()"
-        class="w-full py-4 rounded-xl font-black text-lg bg-slate-700 text-slate-500 cursor-not-allowed transition"
-      >
-        🔗 Connect Wallet Dulu
+      <button id="donate-submit-btn" onclick="sendDonation()"
+        class="w-full py-4 rounded-xl font-black text-lg bg-slate-700 text-slate-500 cursor-not-allowed transition">
+        \ud83d\udd17 Connect Wallet Dulu
       </button>
-
-      <!-- TX Status -->
       <div id="tx-status-box" class="hidden"></div>
-
-      <!-- Riwayat donasi -->
       <div class="mt-6">
-        <p class="text-slate-500 text-xs font-semibold uppercase tracking-wide mb-3">⚡ Donasi Terbaru</p>
+        <p class="text-slate-500 text-xs font-semibold uppercase tracking-wide mb-3">\u26a1 Donasi Terbaru</p>
         <div id="donation-history"></div>
       </div>
-
-      <!-- Info disclaimer -->
       <p class="text-slate-600 text-xs text-center mt-5 leading-relaxed">
         Donasi bersifat sukarela dan langsung masuk ke alamat ETH penerima.<br/>
         Pastikan kamu di jaringan Ethereum Mainnet.
       </p>
     </div>
   `;
-
   document.body.appendChild(modal);
 }
 
-// ─── INJECT TIP JAR SECTION ke halaman ───────────────────────────────────
+// ─── INJECT TIP JAR SECTION ──────────────────────────────────────────────
 
 function injectTipJarSection() {
-  // Tambahkan section Tip Jar sebelum footer
   const footer = document.querySelector('footer');
   if (!footer || document.getElementById('tip-jar-section')) return;
-
   const section = document.createElement('section');
   section.id = 'tip-jar-section';
   section.className = 'py-24 px-6 relative overflow-hidden';
@@ -429,85 +402,47 @@ function injectTipJarSection() {
     <div class="absolute inset-0 -z-10">
       <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-crypto-gold/8 rounded-full blur-[120px]"></div>
     </div>
-
     <div class="max-w-3xl mx-auto text-center">
-
-      <!-- Badge -->
       <span class="inline-block mb-4 px-4 py-1 rounded-full bg-crypto-gold/20 border border-crypto-gold/40 text-crypto-gold text-sm font-semibold tracking-wide">
-        💛 Dukung Platform Kami
+        \ud83d\udc9b Dukung Platform Kami
       </span>
-
       <h2 class="text-4xl md:text-5xl font-black mb-4">
         Suka KriptoEdu?<br/>
-        <span class="bg-gradient-to-r from-crypto-gold to-yellow-300 bg-clip-text text-transparent">Kirim Tip Kripto! ☕</span>
+        <span class="bg-gradient-to-r from-crypto-gold to-yellow-300 bg-clip-text text-transparent">Kirim Tip Kripto! \u2615</span>
       </h2>
-
       <p class="text-slate-400 text-lg mb-10 max-w-xl mx-auto leading-relaxed">
-        Konten ini 100% gratis. Kalau kamu merasa terbantu, donasi sekecil apapun sangat berarti buat kami!
-        Langsung masuk ke wallet, tanpa perantara. 🙏
+        Konten ini 100% gratis. Kalau kamu merasa terbantu, donasi sekecil apapun sangat berarti buat kami! Langsung masuk ke wallet, tanpa perantara. \ud83d\ude4f
       </p>
-
-      <!-- Tip Jar Card -->
       <div class="bg-[#1E293B] rounded-3xl border border-crypto-gold/20 p-8 shadow-xl shadow-crypto-gold/5 relative">
-
-        <!-- Decorative coin emoji -->
-        <div class="absolute -top-6 left-1/2 -translate-x-1/2 text-5xl">🪙</div>
-
-        <!-- Stats row -->
+        <div class="absolute -top-6 left-1/2 -translate-x-1/2 text-5xl">\ud83e\udeaa</div>
         <div class="flex justify-center gap-10 mb-8 pt-4">
-          <div class="text-center">
-            <p class="text-3xl font-black text-crypto-gold" id="donation-count">0</p>
-            <p class="text-slate-500 text-xs mt-1">Donatur</p>
-          </div>
-          <div class="text-center">
-            <p class="text-3xl font-black text-white">ETH</p>
-            <p class="text-slate-500 text-xs mt-1">Mata Uang</p>
-          </div>
-          <div class="text-center">
-            <p class="text-3xl font-black text-green-400">100%</p>
-            <p class="text-slate-500 text-xs mt-1">Langsung ke Wallet</p>
-          </div>
+          <div class="text-center"><p class="text-3xl font-black text-crypto-gold" id="donation-count">0</p><p class="text-slate-500 text-xs mt-1">Donatur</p></div>
+          <div class="text-center"><p class="text-3xl font-black text-white">ETH</p><p class="text-slate-500 text-xs mt-1">Mata Uang</p></div>
+          <div class="text-center"><p class="text-3xl font-black text-green-400">100%</p><p class="text-slate-500 text-xs mt-1">Langsung ke Wallet</p></div>
         </div>
-
-        <!-- Preset quick tip buttons -->
         <div class="flex flex-wrap justify-center gap-3 mb-6">
           ${DONATION_PRESETS.map(p => `
-            <button
-              onclick="selectPreset('${p.eth}'); openDonationModal();"
-              class="flex items-center gap-2 bg-crypto-dark hover:bg-crypto-gold/10 border border-white/10 hover:border-crypto-gold/40 text-white hover:text-crypto-gold text-sm font-semibold px-5 py-2.5 rounded-full transition-all"
-            >
+            <button onclick="selectPreset('${p.eth}'); openDonationModal();"
+              class="flex items-center gap-2 bg-crypto-dark hover:bg-crypto-gold/10 border border-white/10 hover:border-crypto-gold/40 text-white hover:text-crypto-gold text-sm font-semibold px-5 py-2.5 rounded-full transition-all">
               ${p.label} <span class="text-crypto-gold font-black">${p.eth} ETH</span>
             </button>
           `).join('')}
         </div>
-
-        <!-- Main CTA -->
-        <button
-          onclick="openDonationModal()"
-          class="w-full sm:w-auto inline-flex items-center justify-center gap-3 bg-gradient-to-r from-crypto-gold to-yellow-400 text-crypto-dark font-black text-lg px-10 py-4 rounded-full hover:opacity-90 transition shadow-lg shadow-crypto-gold/20"
-        >
-          <span>💛</span>
-          <span>Buka Tip Jar</span>
-          <span>→</span>
+        <button onclick="openDonationModal()"
+          class="w-full sm:w-auto inline-flex items-center justify-center gap-3 bg-gradient-to-r from-crypto-gold to-yellow-400 text-crypto-dark font-black text-lg px-10 py-4 rounded-full hover:opacity-90 transition shadow-lg shadow-crypto-gold/20">
+          <span>\ud83d\udc9b</span><span>Buka Tip Jar</span><span>\u2192</span>
         </button>
-
-        <p class="text-slate-600 text-xs mt-5">
-          Butuh MetaMask · Ethereum Mainnet · Gas fee berlaku
-        </p>
+        <p class="text-slate-600 text-xs mt-5">Butuh wallet (MetaMask / WalletConnect / dll) \u00b7 Ethereum Mainnet \u00b7 Gas fee berlaku</p>
       </div>
     </div>
   `;
-
   footer.parentNode.insertBefore(section, footer);
 }
 
-// ─── WATCH WALLET STATE CHANGES ──────────────────────────────────────────
+// ─── WATCH WALLET STATE ───────────────────────────────────────────────────
 
 function watchWalletState() {
-  // Poll state wallet setiap 1 detik untuk update tombol donasi
-  setInterval(() => {
-    if (isModalOpen) updateDonateButton();
-  }, 1000);
+  setInterval(() => { if (isModalOpen) updateDonateButton(); }, 800);
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────
@@ -516,16 +451,12 @@ function initDonation() {
   injectDonationModal();
   injectTipJarSection();
   watchWalletState();
-
-  // Close modal dengan Escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && isModalOpen) closeDonationModal();
   });
-
   renderHistory();
 }
 
-// Jalankan setelah DOM siap
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initDonation);
 } else {
