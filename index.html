@@ -24,29 +24,6 @@
     .accordion-content.open { max-height:600px; }
     .accordion-icon { transition:transform 0.3s ease; }
     .accordion-icon.open { transform:rotate(45deg); }
-    /* Web3Modal dark theme overrides */
-    #web3modal-modal-lightbox {
-      background: rgba(0,0,0,0.75) !important;
-      backdrop-filter: blur(8px) !important;
-    }
-    #web3modal-modal-container {
-      background: #0F172A !important;
-      border: 1px solid rgba(255,255,255,0.1) !important;
-      border-radius: 1.5rem !important;
-      box-shadow: 0 25px 60px rgba(0,0,0,0.6) !important;
-    }
-    #web3modal-modal-hitbox { background: transparent !important; }
-    .web3modal-provider-wrapper {
-      border: 1px solid rgba(255,255,255,0.07) !important;
-      border-radius: 1rem !important;
-      background: #1E293B !important;
-    }
-    .web3modal-provider-wrapper:hover {
-      border-color: rgba(124,58,237,0.5) !important;
-      background: rgba(124,58,237,0.1) !important;
-    }
-    .web3modal-provider-name { color: #f1f5f9 !important; font-weight: 700 !important; }
-    .web3modal-provider-description { color: #94a3b8 !important; }
   </style>
 </head>
 <body class="bg-crypto-dark text-white font-sans antialiased">
@@ -74,7 +51,7 @@
         <li><button onclick="openDonationModal()" class="text-crypto-gold hover:text-yellow-300 transition font-bold" data-i18n="nav_donate">💛 Donasi</button></li>
       </ul>
       <div class="hidden md:flex items-center gap-3">
-        <!-- Lang switcher injected by i18n.js -->
+        <!-- Lang switcher diinject oleh i18n.js -->
         <button id="wallet-btn" type="button"
           class="hidden md:inline-flex items-center gap-2 bg-crypto-purple hover:bg-purple-500 text-white text-sm font-semibold px-4 py-2 rounded-full transition-all duration-200 cursor-pointer">
           <span id="wallet-btn-dot" class="w-2 h-2 rounded-full bg-white/50"></span>
@@ -110,13 +87,6 @@
       <div class="flex flex-col sm:flex-row gap-4 justify-center" id="mulai">
         <a href="#blockchain" class="bg-gradient-to-r from-crypto-blue to-crypto-purple text-white font-bold px-8 py-4 rounded-full hover:opacity-90 transition text-lg shadow-lg shadow-purple-900/40" data-i18n="hero_cta1">Mulai Belajar Sekarang</a>
         <button onclick="openDonationModal()" class="flex items-center justify-center gap-2 border border-crypto-gold/40 text-crypto-gold font-semibold px-8 py-4 rounded-full hover:bg-crypto-gold/10 transition text-lg" data-i18n="hero_cta2">💛 Dukung Kami</button>
-      </div>
-      <!-- Connect Wallet shortcut -->
-      <div class="mt-6">
-        <button onclick="handleWalletButtonClick()"
-          class="inline-flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/15 text-slate-300 text-sm font-semibold px-5 py-2.5 rounded-full transition">
-          🔗 Connect Wallet (MetaMask / WalletConnect / dll)
-        </button>
       </div>
       <div class="mt-10 flex flex-wrap justify-center gap-10 text-center">
         <div><p class="text-3xl font-black text-white">10K+</p><p class="text-slate-500 text-sm mt-1" data-i18n="hero_stat1_lbl">Pelajar Aktif</p></div>
@@ -217,7 +187,7 @@
         <div class="bg-crypto-card rounded-2xl p-7 border border-crypto-purple/30">
           <div class="text-4xl mb-4">🔗</div>
           <h3 class="text-xl font-bold mb-2 text-crypto-purple" data-i18n="feat5_title">Connect Wallet ✅</h3>
-          <p class="text-slate-400 text-sm leading-relaxed" data-i18n="feat5_desc">MetaMask, WalletConnect & 100+ wallet via Web3Modal — desktop & mobile!</p>
+          <p class="text-slate-400 text-sm leading-relaxed">Langsung via MetaMask — desktop extension atau browser bawaan MetaMask app di HP.</p>
           <span class="mt-4 inline-block text-xs font-semibold bg-crypto-purple/20 text-crypto-purple px-3 py-1 rounded-full" data-i18n="feat5_badge">Live!</span>
         </div>
         <div class="bg-crypto-card rounded-2xl p-7 border border-crypto-gold/30 cursor-pointer hover:bg-crypto-gold/5 transition" onclick="openDonationModal()">
@@ -237,14 +207,7 @@
       <div class="space-y-4">
         <div class="flex items-center gap-5 bg-crypto-card rounded-xl px-6 py-5 border border-crypto-blue/30"><span class="text-2xl font-black text-crypto-blue w-8 shrink-0">01</span><div class="flex-1"><h4 class="font-bold" data-i18n="curr1_title">Pengenalan Blockchain & Kripto</h4><p class="text-slate-500 text-sm" data-i18n="curr1_meta">5 pelajaran · 30 menit</p></div><span class="text-xs font-semibold bg-crypto-blue/20 text-crypto-blue px-3 py-1 rounded-full" data-i18n="curr1_badge">✅ Ada di halaman ini</span></div>
         <div class="flex items-center gap-5 bg-crypto-card rounded-xl px-6 py-5 border border-crypto-gold/30"><span class="text-2xl font-black text-crypto-gold w-8 shrink-0">02</span><div class="flex-1"><h4 class="font-bold" data-i18n="curr2_title">Cara Kerja Bitcoin & Ethereum</h4><p class="text-slate-500 text-sm" data-i18n="curr2_meta">8 pelajaran · 1 jam</p></div><span class="text-xs font-semibold bg-crypto-gold/20 text-crypto-gold px-3 py-1 rounded-full" data-i18n="curr2_badge">✅ Ada di halaman ini</span></div>
-        <div class="flex items-center gap-5 bg-crypto-card rounded-xl px-6 py-5 border border-crypto-purple/30">
-          <span class="text-2xl font-black text-crypto-purple w-8 shrink-0">03</span>
-          <div class="flex-1">
-            <h4 class="font-bold">Connect Wallet via Web3Modal</h4>
-            <p class="text-slate-500 text-sm">MetaMask · WalletConnect · Mobile · Desktop</p>
-          </div>
-          <span class="text-xs font-semibold bg-crypto-purple/20 text-crypto-purple px-3 py-1 rounded-full">✅ Live!</span>
-        </div>
+        <div class="flex items-center gap-5 bg-crypto-card rounded-xl px-6 py-5 border border-crypto-purple/30"><span class="text-2xl font-black text-crypto-purple w-8 shrink-0">03</span><div class="flex-1"><h4 class="font-bold">Connect Wallet via MetaMask</h4><p class="text-slate-500 text-sm">Desktop extension · MetaMask in-app browser</p></div><span class="text-xs font-semibold bg-crypto-purple/20 text-crypto-purple px-3 py-1 rounded-full">✅ Live!</span></div>
         <div class="flex items-center gap-5 bg-crypto-card rounded-xl px-6 py-5 border border-crypto-gold/30 cursor-pointer hover:bg-crypto-gold/5 transition" onclick="openDonationModal()">
           <span class="text-2xl font-black text-crypto-gold w-8 shrink-0">💛</span>
           <div class="flex-1"><h4 class="font-bold" data-i18n="curr4_title">Tip Jar — Donasi Kripto</h4><p class="text-slate-500 text-sm" data-i18n="curr4_meta">Klik untuk coba donasi!</p></div>
@@ -264,7 +227,6 @@
         <button onclick="handleWalletButtonClick()" class="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-crypto-blue to-crypto-purple text-white font-bold px-10 py-4 rounded-full text-lg hover:opacity-90 transition shadow-lg shadow-purple-900/40" data-i18n="cta_btn1">🔗 Connect Wallet</button>
         <button onclick="openDonationModal()" class="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-crypto-gold to-yellow-400 text-crypto-dark font-bold px-10 py-4 rounded-full text-lg hover:opacity-90 transition shadow-lg shadow-yellow-900/20" data-i18n="cta_btn2">💛 Kirim Tip Kripto</button>
       </div>
-      <p class="text-slate-500 text-sm mt-4">Didukung Web3Modal · MetaMask · WalletConnect · Mobile & Desktop</p>
     </div>
   </section>
 
@@ -275,7 +237,6 @@
     <p class="mt-3"><button onclick="openDonationModal()" class="inline-flex items-center gap-2 text-crypto-gold hover:text-yellow-300 transition text-xs font-semibold" data-i18n="footer_donate">💛 Dukung KriptoEdu dengan Tip Kripto</button></p>
   </footer>
 
-  <!-- JAVASCRIPT -->
   <script>
     function toggleAccordion(btn) {
       const content = btn.nextElementSibling;
@@ -287,12 +248,7 @@
     }
   </script>
 
-  <!--
-    Load order:
-    1. wallet.js   — Web3Modal sistem (lazy-load ethers + WalletConnect + Web3Modal)
-    2. donation.js — Tip Jar (butuh walletState dari wallet.js)
-    3. i18n.js     — Language switcher (inject ke navbar setelah DOM siap)
-  -->
+  <!-- Load order: wallet.js → donation.js → i18n.js -->
   <script src="wallet.js"></script>
   <script src="donation.js"></script>
   <script src="i18n.js"></script>

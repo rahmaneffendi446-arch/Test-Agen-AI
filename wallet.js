@@ -1,64 +1,44 @@
 /**
- * wallet.js — KriptoEdu Wallet System
- * RAH-14: Rebuild total dengan Web3Modal v1 + Ethers.js v5
+ * wallet.js — KriptoEdu Wallet Connector (Simple & Stable)
+ * RAH-15: Rollback ke sistem sederhana berbasis window.ethereum
  *
- * Kenapa Web3Modal?
- *  - Satu interface untuk MetaMask, WalletConnect, Coinbase Wallet, dll
- *  - Menangani mobile browser secara otomatis (deep link, QR, in-app browser)
- *  - Tidak perlu custom mobile detection yang error-prone
- *  - Stabil, battle-tested di banyak dApp production
+ * Cara kerja:
+ *  - Deteksi window.ethereum yang di-inject MetaMask (desktop extension
+ *    maupun MetaMask in-app browser di HP)
+ *  - Jika tidak ada → tampilkan pilihan: buka MetaMask app atau info
+ *  - Tidak ada dependency eksternal, tidak ada CDN tambahan
+ *  - Ringan, cepat, tidak bisa error karena CDN gagal load
  *
- * Load order CDN (semua lazy, hanya dimuat saat user klik Connect):
- *  1. ethers.js v5
- *  2. @walletconnect/web3-provider@1.8.0
- *  3. web3modal@1.9.12
+ * Kompatibel dengan:
+ *  ✓ MetaMask Desktop (Chrome, Firefox, Brave)
+ *  ✓ MetaMask Mobile — built-in browser ("Browser" tab di app)
+ *  ✓ Trust Wallet built-in browser
+ *  ✓ Brave Wallet (inject window.ethereum)
+ *  ✓ Coinbase Wallet built-in browser
  */
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const SUPPORTED_CHAIN_ID   = 1;      // Ethereum Mainnet (integer)
-const SUPPORTED_CHAIN_HEX  = '0x1';
+const SUPPORTED_CHAIN_ID   = '0x1';
 const SUPPORTED_CHAIN_NAME = 'Ethereum Mainnet';
 
-// ─── SHARED STATE ────────────────────────────────────────────────────────────
-// Dibaca juga oleh donation.js — jangan rename
+// ─── STATE (dibaca oleh donation.js — jangan rename) ──────────────────────────
 let walletState = {
-  address:       null,
-  chainId:       null,
-  isConnected:   false,
-  provider:      null,   // raw Web3Modal provider instance
-  ethersProvider: null,  // ethers.providers.Web3Provider wrapper
-};
-
-let _web3Modal   = null;  // singleton Web3Modal instance
-let _sdkLoading  = false; // guard: tidak load ulang jika sedang loading
-
-// ─── CDN URLs ─────────────────────────────────────────────────────────────────
-const _CDN = {
-  ethers:   'https://cdn.ethers.io/lib/ethers-5.7.umd.min.js',
-  wc:       'https://unpkg.com/@walletconnect/web3-provider@1.8.0/dist/umd/index.min.js',
-  w3m:      'https://unpkg.com/web3modal@1.9.12/dist/index.js',
+  address:     null,
+  chainId:     null,
+  isConnected: false,
 };
 
 // ─── UTILS ───────────────────────────────────────────────────────────────────
 
+/** Format 0x1234567890abcd → 0x1234...abcd */
 function shortenAddress(addr) {
   if (!addr) return '';
   return addr.slice(0, 6) + '...' + addr.slice(-4);
 }
 
-function _loadScript(url) {
-  return new Promise((resolve, reject) => {
-    // Sudah ada di DOM? Skip
-    if ([...document.scripts].some(s => s.src.includes(url.split('/').pop()))) {
-      return resolve();
-    }
-    const s    = document.createElement('script');
-    s.src      = url;
-    s.async    = true;
-    s.onload   = resolve;
-    s.onerror  = () => reject(new Error('Gagal load: ' + url));
-    document.head.appendChild(s);
-  });
+/** Apakah ada wallet provider yang di-inject? (MetaMask, Trust, Brave, dll) */
+function hasProvider() {
+  return typeof window.ethereum !== 'undefined';
 }
 
 // ─── TOAST ───────────────────────────────────────────────────────────────────
@@ -72,19 +52,19 @@ function showToast(message, type = 'info') {
   if (!toast) return;
 
   const map = {
-    success: { i: '\u2705', bg: 'bg-green-500/20',  bd: 'border-green-500/40',  tx: 'text-green-300'  },
-    error:   { i: '\u274c', bg: 'bg-red-500/20',    bd: 'border-red-500/40',    tx: 'text-red-300'    },
-    warning: { i: '\u26a0\ufe0f', bg: 'bg-yellow-500/20', bd: 'border-yellow-500/40', tx: 'text-yellow-300' },
-    info:    { i: '\u2139\ufe0f', bg: 'bg-blue-500/20',   bd: 'border-blue-500/40',   tx: 'text-blue-300'   },
+    success: { i: '✅', bg: 'bg-green-500/20',  bd: 'border-green-500/40',  tx: 'text-green-300'  },
+    error:   { i: '❌', bg: 'bg-red-500/20',    bd: 'border-red-500/40',    tx: 'text-red-300'    },
+    warning: { i: '⚠️', bg: 'bg-yellow-500/20', bd: 'border-yellow-500/40', tx: 'text-yellow-300' },
+    info:    { i: 'ℹ️', bg: 'bg-blue-500/20',   bd: 'border-blue-500/40',   tx: 'text-blue-300'   },
   };
   const c = map[type] || map.info;
 
-  toast.className      = `fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-5 py-3 rounded-2xl border backdrop-blur-md shadow-xl transition-all duration-300 ${c.bg} ${c.bd}`;
-  msg.className        = `text-sm font-semibold ${c.tx}`;
-  icon.textContent     = c.i;
-  msg.textContent      = message;
-  toast.style.opacity  = '1';
-  toast.style.transform = 'translateY(0)';
+  toast.className = `fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-5 py-3 rounded-2xl border backdrop-blur-md shadow-xl transition-all duration-300 ${c.bg} ${c.bd}`;
+  msg.className   = `text-sm font-semibold ${c.tx}`;
+  icon.textContent = c.i;
+  msg.textContent  = message;
+  toast.style.opacity       = '1';
+  toast.style.transform     = 'translateY(0)';
   toast.style.pointerEvents = 'auto';
 
   clearTimeout(_toastTimer);
@@ -109,6 +89,7 @@ function updateWalletUI() {
   if (!btn) return;
 
   if (walletState.isConnected && walletState.address) {
+    // ── CONNECTED ──
     btn.className = [
       'hidden md:inline-flex items-center gap-2',
       'bg-green-500/15 hover:bg-red-500/15',
@@ -122,207 +103,178 @@ function updateWalletUI() {
       <span class="hidden group-hover:inline">Disconnect</span>`;
     if (dot) dot.className = 'w-2 h-2 rounded-full bg-green-400 group-hover:bg-red-400 transition-colors animate-pulse';
     if (badge) {
-      badge.innerHTML   = `<span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span><span>${shortenAddress(walletState.address)}</span>`;
-      badge.className   = 'mt-6 inline-flex items-center gap-2 bg-green-500/10 border border-green-500/30 text-green-400 text-sm font-mono px-4 py-2 rounded-full';
+      badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span><span>${shortenAddress(walletState.address)}</span>`;
+      badge.className = 'mt-6 inline-flex items-center gap-2 bg-green-500/10 border border-green-500/30 text-green-400 text-sm font-mono px-4 py-2 rounded-full';
       badge.classList.remove('hidden');
     }
   } else {
+    // ── DISCONNECTED ──
     btn.className = 'hidden md:inline-flex items-center gap-2 bg-crypto-purple hover:bg-purple-500 text-white text-sm font-semibold px-4 py-2 rounded-full transition-all duration-200 cursor-pointer';
-    if (label) label.innerHTML = '<span>\ud83d\udd17 Connect Wallet</span>';
+    if (label) label.innerHTML = '<span>🔗 Connect Wallet</span>';
     if (dot)   dot.className   = 'w-2 h-2 rounded-full bg-white/50';
     if (badge) badge.classList.add('hidden');
   }
 }
 
-// ─── WEB3MODAL BOOTSTRAP ──────────────────────────────────────────────────────
+// ─── NO-WALLET MODAL ──────────────────────────────────────────────────────────
+/**
+ * Muncul saat window.ethereum tidak ada — kasih tahu user cara connect:
+ *   1. Buka web ini di dalam browser MetaMask app
+ *   2. Install MetaMask extension (desktop)
+ */
+function showNoWalletModal() {
+  // Hapus modal lama kalau ada
+  const existing = document.getElementById('no-wallet-modal');
+  if (existing) existing.remove();
 
-async function _initWeb3Modal() {
-  if (_web3Modal) return; // Sudah ada
-  if (_sdkLoading) {
-    // Tunggu sampai load selesai
-    await new Promise(r => setTimeout(r, 100));
-    if (_web3Modal) return;
-  }
+  const overlay = document.createElement('div');
+  overlay.id        = 'no-wallet-modal';
+  overlay.className = 'fixed inset-0 z-[10001] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4 pb-4 sm:pb-0';
+  overlay.innerHTML = `
+    <div class="absolute inset-0" onclick="document.getElementById('no-wallet-modal').remove(); document.body.style.overflow='';"></div>
+    <div class="relative w-full max-w-sm bg-[#0F172A] border border-white/10 rounded-3xl shadow-2xl p-7 z-10">
 
-  _sdkLoading = true;
-  try {
-    // Load semua dependency secara berurutan
-    await _loadScript(_CDN.ethers);
-    await _loadScript(_CDN.wc);
-    await _loadScript(_CDN.w3m);
+      <!-- Handle -->
+      <div class="flex justify-center mb-5"><div class="w-10 h-1 bg-white/20 rounded-full"></div></div>
 
-    const Web3Modal  = window.Web3Modal?.default ?? window.Web3Modal;
-    const WCProvider = window.WalletConnectProvider?.default ?? window.WalletConnectProvider;
+      <!-- Header -->
+      <div class="text-center mb-6">
+        <div class="text-5xl mb-3">🦊</div>
+        <h3 class="text-xl font-black mb-1">Wallet Belum Terdeteksi</h3>
+        <p class="text-slate-400 text-sm">Pilih salah satu cara di bawah ini untuk connect wallet.</p>
+      </div>
 
-    if (!Web3Modal) throw new Error('Web3Modal tidak berhasil dimuat.');
+      <!-- Option 1: Buka di MetaMask browser -->
+      <div class="bg-[#1E293B] rounded-2xl p-5 mb-3 border border-orange-500/20">
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-2xl">📱</span>
+          <p class="font-bold text-orange-300">Pakai HP? Buka via MetaMask App</p>
+        </div>
+        <p class="text-slate-400 text-xs leading-relaxed mb-4">
+          Buka aplikasi <strong class="text-white">MetaMask</strong> di HP kamu → tap tab <strong class="text-white">"Browser"</strong> → ketik alamat website ini.
+          MetaMask akan otomatis menghubungkan wallet kamu.
+        </p>
+        <div class="bg-crypto-dark rounded-xl px-4 py-2 border border-white/5 flex items-center gap-2">
+          <span class="text-slate-500 text-xs">🌐</span>
+          <span class="text-slate-300 text-xs font-mono break-all" id="current-url-display">${window.location.hostname}</span>
+        </div>
+        <button
+          onclick="copyUrlToClipboard()"
+          class="mt-3 w-full flex items-center justify-center gap-2 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 text-orange-300 text-sm font-semibold py-2.5 rounded-xl transition"
+        >
+          📋 Salin URL Halaman Ini
+        </button>
+      </div>
 
-    const providerOptions = {};
+      <!-- Option 2: Install MetaMask desktop -->
+      <div class="bg-[#1E293B] rounded-2xl p-5 mb-4 border border-white/5">
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-2xl">💻</span>
+          <p class="font-bold text-slate-300">Pakai Desktop? Install Extension</p>
+        </div>
+        <p class="text-slate-400 text-xs leading-relaxed mb-3">
+          Install ekstensi MetaMask di Chrome, Firefox, atau Brave. Gratis dan hanya butuh 2 menit.
+        </p>
+        <a href="https://metamask.io/download/" target="_blank" rel="noopener"
+          class="flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-400 text-white text-sm font-bold py-2.5 rounded-xl transition">
+          Install MetaMask Gratis →
+        </a>
+      </div>
 
-    if (WCProvider) {
-      providerOptions.walletconnect = {
-        package: WCProvider,
-        options: {
-          rpc:    { 1: 'https://rpc.ankr.com/eth' },
-          bridge: 'https://bridge.walletconnect.org',
-        },
-      };
-    }
+      <button
+        onclick="document.getElementById('no-wallet-modal').remove(); document.body.style.overflow='';"
+        class="w-full py-2 text-slate-500 hover:text-white text-sm transition">Tutup</button>
+    </div>
+  `;
 
-    _web3Modal = new Web3Modal({
-      network:       'mainnet',
-      cacheProvider: true,   // auto-reconnect saat reload
-      disableInjectedProvider: false,
-      providerOptions,
-      theme: {
-        background: '#0F172A',
-        main:       '#f1f5f9',
-        secondary:  '#94a3b8',
-        border:     '#1e293b',
-        hover:      '#1e293b',
-      },
-    });
-  } finally {
-    _sdkLoading = false;
-  }
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
 }
 
-// ─── PROVIDER SETUP (setelah modal connect) ───────────────────────────────────
-
-async function _setupProvider(rawInstance) {
-  const ethers   = window.ethers;
-  const provider = new ethers.providers.Web3Provider(rawInstance, 'any');
-  const signer   = provider.getSigner();
-  const address  = await signer.getAddress();
-  const network  = await provider.getNetwork();
-
-  walletState.address        = address;
-  walletState.chainId        = network.chainId;
-  walletState.isConnected    = true;
-  walletState.provider       = rawInstance;  // raw: dipakai WC disconnect
-  walletState.ethersProvider = provider;     // ethers: dipakai donation.js
-
-  sessionStorage.setItem('wallet_connected', 'true');
-  sessionStorage.setItem('wallet_address',   address);
-
-  updateWalletUI();
-
-  const ok = network.chainId === SUPPORTED_CHAIN_ID;
-  showToast(
-    ok
-      ? `\u2705 Wallet terhubung! ${shortenAddress(address)}`
-      : `\u26a0\ufe0f Terhubung di chain ${network.chainId}, bukan Mainnet.`,
-    ok ? 'success' : 'warning'
-  );
-
-  // ── Event listeners dari provider ──
-  if (rawInstance.on) {
-    rawInstance.on('accountsChanged', (accounts) => {
-      if (!accounts || !accounts.length) {
-        disconnectWallet();
-      } else {
-        walletState.address = accounts[0];
-        sessionStorage.setItem('wallet_address', accounts[0]);
-        updateWalletUI();
-        showToast(`Akun berganti: ${shortenAddress(accounts[0])} \ud83d\udd04`, 'info');
-      }
-    });
-    rawInstance.on('chainChanged', (chainIdHex) => {
-      const cid = parseInt(chainIdHex, 16);
-      walletState.chainId = cid;
-      const ok2 = cid === SUPPORTED_CHAIN_ID;
-      showToast(ok2 ? 'Beralih ke Ethereum Mainnet \u2705' : `Jaringan berubah! Gunakan ${SUPPORTED_CHAIN_NAME}. \u26a0\ufe0f`, ok2 ? 'success' : 'warning');
-    });
-    rawInstance.on('disconnect', () => { disconnectWallet(); });
-  }
+/** Salin URL halaman ke clipboard */
+function copyUrlToClipboard() {
+  navigator.clipboard?.writeText(window.location.href).then(() => {
+    showToast('URL disalin! Buka di MetaMask Browser 📱', 'success');
+  }).catch(() => {
+    showToast('URL: ' + window.location.href, 'info');
+  });
 }
 
 // ─── CONNECT ─────────────────────────────────────────────────────────────────
 
 async function connectWallet() {
-  try {
-    showToast('Memuat sistem wallet... \u23f3', 'info');
-    await _initWeb3Modal();
+  // Tidak ada provider → kasih panduan ke user
+  if (!hasProvider()) {
+    showNoWalletModal();
+    return;
+  }
 
-    // Web3Modal menampilkan picker: MetaMask / WalletConnect / dll
-    // Di mobile: otomatis menampilkan deep link & QR yang sesuai
-    const rawInstance = await _web3Modal.connect();
-    await _setupProvider(rawInstance);
+  // Disable tombol sementara
+  const btn = document.getElementById('wallet-btn');
+  if (btn) {
+    btn.disabled = true;
+    const lbl = document.getElementById('wallet-btn-label');
+    if (lbl) lbl.innerHTML = '<span>Menghubungkan...</span>';
+  }
+
+  try {
+    // Minta akses akun — akan buka popup MetaMask
+    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+
+    if (!accounts || accounts.length === 0) {
+      throw new Error('Tidak ada akun yang dipilih.');
+    }
+
+    const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+
+    walletState.address     = accounts[0];
+    walletState.chainId     = chainId;
+    walletState.isConnected = true;
+
+    // Simpan session
+    sessionStorage.setItem('wallet_connected', 'true');
+    sessionStorage.setItem('wallet_address',   accounts[0]);
+
+    updateWalletUI();
+
+    if (chainId !== SUPPORTED_CHAIN_ID) {
+      showToast(`Wallet terhubung — tapi kamu di jaringan lain. Ganti ke ${SUPPORTED_CHAIN_NAME} ya! ⚠️`, 'warning');
+    } else {
+      showToast(`✅ Wallet terhubung! ${shortenAddress(accounts[0])}`, 'success');
+    }
 
   } catch (err) {
-    const msg = err?.message || '';
-    if (
-      msg.includes('User closed') ||
-      msg.includes('Modal closed') ||
-      msg.includes('user rejected') ||
-      msg.includes('User rejected') ||
-      err?.code === 4001
-    ) {
-      showToast('Koneksi dibatalkan. \ud83d\ude0a', 'warning');
-    } else if (msg.includes('Gagal load')) {
-      showToast('Gagal memuat SDK. Cek koneksi internet kamu!', 'error');
+    if (err.code === 4001) {
+      showToast('Koneksi dibatalkan 😅', 'warning');
+    } else if (err.code === -32002) {
+      // Popup MetaMask sudah terbuka tapi belum direspons user
+      showToast('Buka MetaMask dan setujui permintaan koneksi 🦊', 'info');
     } else {
-      showToast('Gagal connect: ' + (msg || 'Error tidak diketahui'), 'error');
-      console.error('[wallet.js] connectWallet error:', err);
+      showToast('Gagal connect: ' + (err.message || 'Error tidak diketahui'), 'error');
     }
+  } finally {
+    if (btn) btn.disabled = false;
+    updateWalletUI();
   }
 }
 
 // ─── DISCONNECT ──────────────────────────────────────────────────────────────
 
-async function disconnectWallet() {
+function disconnectWallet() {
   const prev = walletState.address;
 
-  // Clear Web3Modal cache
-  if (_web3Modal) {
-    try { _web3Modal.clearCachedProvider(); } catch (_) {}
-  }
-
-  // WalletConnect perlu explicit close
-  if (walletState.provider?.disconnect) {
-    try { await walletState.provider.disconnect(); } catch (_) {}
-  }
-  if (walletState.provider?.close) {
-    try { await walletState.provider.close(); } catch (_) {}
-  }
-
-  walletState.address        = null;
-  walletState.chainId        = null;
-  walletState.isConnected    = false;
-  walletState.provider       = null;
-  walletState.ethersProvider = null;
+  walletState.address     = null;
+  walletState.chainId     = null;
+  walletState.isConnected = false;
 
   sessionStorage.removeItem('wallet_connected');
   sessionStorage.removeItem('wallet_address');
 
   updateWalletUI();
-  showToast(`Wallet ${shortenAddress(prev)} disconnect. \ud83d\udc4b`, 'info');
+  showToast(`Wallet ${shortenAddress(prev)} disconnect. 👋`, 'info');
 }
 
-// ─── AUTO-RECONNECT ──────────────────────────────────────────────────────────
-
-async function _tryAutoReconnect() {
-  const wasSaved = sessionStorage.getItem('wallet_connected');
-  if (!wasSaved) return;
-
-  try {
-    await _initWeb3Modal();
-
-    // Jika ada cached provider, reconnect silent tanpa popup
-    if (_web3Modal.cachedProvider) {
-      const rawInstance = await _web3Modal.connect();
-      await _setupProvider(rawInstance);
-    }
-  } catch (_) {
-    // Gagal auto-reconnect: bersihkan session, tidak perlu error message
-    sessionStorage.removeItem('wallet_connected');
-    sessionStorage.removeItem('wallet_address');
-    if (_web3Modal) {
-      try { _web3Modal.clearCachedProvider(); } catch (__) {}
-    }
-  }
-}
-
-// ─── BUTTON HANDLER ──────────────────────────────────────────────────────────
+// ─── BUTTON CLICK HANDLER ─────────────────────────────────────────────────────
 
 function handleWalletButtonClick() {
   if (walletState.isConnected) {
@@ -332,18 +284,77 @@ function handleWalletButtonClick() {
   }
 }
 
+// ─── EVENT LISTENERS ──────────────────────────────────────────────────────────
+
+function setupProviderListeners() {
+  if (!hasProvider()) return;
+
+  // Akun berganti (user switch akun di MetaMask)
+  window.ethereum.on('accountsChanged', (accounts) => {
+    if (!accounts || accounts.length === 0) {
+      disconnectWallet();
+    } else {
+      walletState.address = accounts[0];
+      sessionStorage.setItem('wallet_address', accounts[0]);
+      updateWalletUI();
+      showToast(`Akun berganti ke ${shortenAddress(accounts[0])} 🔄`, 'info');
+    }
+  });
+
+  // Jaringan berganti
+  window.ethereum.on('chainChanged', (chainId) => {
+    walletState.chainId = chainId;
+    if (chainId !== SUPPORTED_CHAIN_ID) {
+      showToast(`Jaringan berubah! Gunakan ${SUPPORTED_CHAIN_NAME} ya. ⚠️`, 'warning');
+    } else {
+      showToast('Beralih ke Ethereum Mainnet ✅', 'success');
+    }
+  });
+}
+
+// ─── RESTORE SESSION ──────────────────────────────────────────────────────────
+
+async function restoreSession() {
+  const wasSaved  = sessionStorage.getItem('wallet_connected');
+  const savedAddr = sessionStorage.getItem('wallet_address');
+
+  if (!wasSaved || !savedAddr || !hasProvider()) return;
+
+  try {
+    // eth_accounts TIDAK memunculkan popup — hanya cek apakah sudah authorized
+    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+
+    if (accounts && accounts.length > 0 &&
+        accounts[0].toLowerCase() === savedAddr.toLowerCase()) {
+      const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+      walletState.address     = accounts[0];
+      walletState.chainId     = chainId;
+      walletState.isConnected = true;
+      updateWalletUI();
+      showToast(`Wallet ${shortenAddress(accounts[0])} terhubung kembali 🔗`, 'success');
+    } else {
+      // Session tidak valid, bersihkan
+      sessionStorage.removeItem('wallet_connected');
+      sessionStorage.removeItem('wallet_address');
+    }
+  } catch (_) {
+    sessionStorage.removeItem('wallet_connected');
+    sessionStorage.removeItem('wallet_address');
+  }
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 
 function initWallet() {
-  // Pasang event listener ke semua tombol wallet
-  const desktopBtn = document.getElementById('wallet-btn');
-  if (desktopBtn) desktopBtn.addEventListener('click', handleWalletButtonClick);
+  // Pasang event listener ke tombol wallet (desktop + mobile)
+  ['wallet-btn', 'wallet-btn-mobile'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', handleWalletButtonClick);
+  });
 
-  const mobileBtn = document.getElementById('wallet-btn-mobile');
-  if (mobileBtn) mobileBtn.addEventListener('click', handleWalletButtonClick);
-
+  setupProviderListeners();
   updateWalletUI();
-  _tryAutoReconnect();
+  restoreSession();
 }
 
 if (document.readyState === 'loading') {
