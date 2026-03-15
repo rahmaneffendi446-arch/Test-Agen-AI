@@ -1,64 +1,142 @@
 /**
  * wallet.js: KriptoEdu Wallet Connector
- * Multi-wallet picker menggunakan EIP-6963 (standar industri modern)
  *
- * EIP-6963 adalah standar resmi Ethereum yang digunakan secara internal
- * oleh Web3Modal, RainbowKit, dan semua dApp profesional. Cara kerjanya:
- *  1. Halaman dispatch event 'eip6963:requestProvider'
- *  2. Setiap wallet extension yang terinstall merespons dengan
- *     'eip6963:announceProvider', mengirimkan { info, provider }
- *     di mana info berisi nama resmi dan ikon wallet tersebut
- *  3. Kita kumpulkan semua respons dan tampilkan sebagai picker
+ * Strategi deteksi wallet (3 lapis, urutan prioritas):
  *
- * Wallet yang didukung secara otomatis (jika terinstall):
- *  MetaMask, Bitget Wallet, Coinbase Wallet, Brave Wallet,
- *  Rainbow, Trust Wallet, Zerion, Rabby, OKX Wallet, dan lainnya.
+ * 1. EIP-6963 (Multi Injected Provider Discovery)
+ *    Standar modern — setiap wallet announce diri dengan nama + ikon resmi.
+ *    MetaMask dan Bitget Wallet keduanya support EIP-6963.
  *
- * Fallback: window.ethereum untuk wallet lama yang belum support EIP-6963.
+ * 2. window.bitkeep.ethereum (Bitget legacy fallback)
+ *    Bitget menyimpan provider-nya sendiri di window.bitkeep.ethereum
+ *    agar tidak bentrok dengan MetaMask di window.ethereum.
+ *    Jika Bitget tidak muncul via EIP-6963, kita cek jalur ini.
+ *
+ * 3. window.ethereum (legacy injected)
+ *    Fallback untuk wallet lama yang belum support EIP-6963.
+ *    Kita beri label berdasarkan property yang ada
+ *    (window.ethereum.isMetaMask, isBitKeep, isCoinbaseWallet, dll).
+ *
+ * Alur saat user klik Connect Wallet:
+ *  - 0 wallet ditemukan  → modal panduan install
+ *  - 1 wallet ditemukan  → langsung connect (tanpa picker)
+ *  - 2+ wallet ditemukan → tampilkan picker, user pilih satu
  */
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SUPPORTED_CHAIN_ID   = '0x1';
 const SUPPORTED_CHAIN_NAME = 'Ethereum Mainnet';
 
-// ── EIP-6963 WALLET DISCOVERY ─────────────────────────────────────────────────
-// Map UUID ke wallet agar tidak duplikat jika wallet announce lebih dari sekali
-const _discoveredWallets = new Map();
+// ── EIP-6963: PASANG LISTENER SEBELUM APAPUN ─────────────────────────────────
+// Harus dipasang sebelum dispatch agar tidak ada announce yang terlewat.
+const _eip6963Wallets = new Map(); // uuid → { info, provider }
 
-// Pasang listener sebelum dispatch agar tidak ada announce yang terlewat
 window.addEventListener('eip6963:announceProvider', (event) => {
   const { info, provider } = event.detail || {};
-  // info.uuid = identifier unik, info.name = nama wallet, info.icon = base64 SVG/PNG
-  if (info && info.uuid && provider) {
-    _discoveredWallets.set(info.uuid, { info, provider });
+  if (info?.uuid && provider) {
+    _eip6963Wallets.set(info.uuid, { info, provider });
   }
 });
 
-// Minta semua wallet extension yang terinstall untuk announce diri
+// Minta semua wallet yang terinstall untuk announce diri sekarang
 window.dispatchEvent(new Event('eip6963:requestProvider'));
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
-// walletState dibaca oleh donation.js, jangan rename propertinya
 let walletState = {
   address:     null,
   chainId:     null,
   isConnected: false,
 };
 
-// Provider dari wallet yang sedang aktif (bisa berbeda dengan window.ethereum)
-let _activeProvider   = null;
-let _activeWalletName = '';
+let _activeProvider   = null; // EIP-1193 provider dari wallet yang dipilih user
+let _activeWalletName = '';   // Nama wallet yang sedang aktif (untuk label UI)
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
 
 /**
- * Singkat alamat wallet: 6 karakter awal + '...' + 4 karakter akhir
- * Input : '0xAbCd1234567890EfGh'
- * Output: '0xAbCd...EfGh'
+ * Singkat alamat: 6 karakter awal + '...' + 4 karakter akhir
+ * '0xAbCd1234567890EfGh' → '0xAbCd...EfGh'
  */
 function shortenAddress(addr) {
   if (!addr || addr.length < 10) return addr || '';
   return addr.substring(0, 6) + '...' + addr.substring(addr.length - 4);
+}
+
+/**
+ * Kumpulkan semua wallet yang terdeteksi dari 3 sumber sekaligus:
+ *
+ * 1. EIP-6963  — nama + ikon resmi, tidak ada ambiguitas
+ * 2. window.bitkeep.ethereum — Bitget legacy path (hindari bentrok dengan MM)
+ * 3. window.ethereum — fallback, deteksi tipe via isMetaMask / isBitKeep / dll
+ *
+ * Hasil: array of { id, name, icon, provider }
+ * Deduplikasi: jika provider sudah ada di EIP-6963, tidak ditambah lagi.
+ */
+function _gatherWallets() {
+  const result    = [];
+  const seenProviders = new Set();
+
+  // ── Lapis 1: EIP-6963 ─────────────────────────────────────────────────────
+  for (const { info, provider } of _eip6963Wallets.values()) {
+    result.push({
+      id:       info.uuid,
+      name:     info.name,
+      icon:     info.icon || null,
+      provider,
+    });
+    seenProviders.add(provider);
+  }
+
+  // ── Lapis 2: window.bitkeep.ethereum (Bitget legacy) ─────────────────────
+  // Bitget menyimpan provider di jalur ini agar tidak menimpa window.ethereum
+  // saat MetaMask juga terinstall.
+  const bitkeepProvider = window.bitkeep?.ethereum || window.isBitKeep?.ethereum;
+  if (bitkeepProvider && !seenProviders.has(bitkeepProvider)) {
+    result.push({
+      id:       'bitkeep-legacy',
+      name:     'Bitget Wallet',
+      icon:     null,
+      provider: bitkeepProvider,
+    });
+    seenProviders.add(bitkeepProvider);
+  }
+
+  // ── Lapis 3: window.ethereum (legacy injected) ───────────────────────────
+  const legacyProvider = window.ethereum;
+  if (legacyProvider && !seenProviders.has(legacyProvider)) {
+    // Deteksi nama wallet dari property yang di-inject
+    let legacyName = 'Browser Wallet';
+    if (legacyProvider.isMetaMask && !legacyProvider.isBraveWallet) {
+      legacyName = 'MetaMask';
+    } else if (legacyProvider.isBitKeep || legacyProvider.isBitkeepChrome) {
+      legacyName = 'Bitget Wallet';
+    } else if (legacyProvider.isCoinbaseWallet || legacyProvider.isCoinbaseBrowser) {
+      legacyName = 'Coinbase Wallet';
+    } else if (legacyProvider.isBraveWallet) {
+      legacyName = 'Brave Wallet';
+    } else if (legacyProvider.isRabby) {
+      legacyName = 'Rabby';
+    } else if (legacyProvider.isOKExWallet || legacyProvider.isOkxWallet) {
+      legacyName = 'OKX Wallet';
+    } else if (legacyProvider.isTrust || legacyProvider.isTrustWallet) {
+      legacyName = 'Trust Wallet';
+    }
+
+    // Cegah duplikat nama (jika EIP-6963 sudah ada provider dengan nama sama)
+    const alreadyByName = result.some(
+      (w) => w.name.toLowerCase() === legacyName.toLowerCase()
+    );
+    if (!alreadyByName) {
+      result.push({
+        id:       'legacy-injected',
+        name:     legacyName,
+        icon:     null,
+        provider: legacyProvider,
+      });
+    }
+  }
+
+  return result;
 }
 
 // ── TOAST ─────────────────────────────────────────────────────────────────────
@@ -79,10 +157,10 @@ function showToast(message, type = 'info') {
   };
   const c = map[type] || map.info;
 
-  toast.className = `fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-5 py-3 rounded-2xl border backdrop-blur-md shadow-xl transition-all duration-300 ${c.bg} ${c.bd}`;
-  msg.className   = `text-sm font-semibold ${c.tx}`;
-  icon.textContent = c.i;
-  msg.textContent  = message;
+  toast.className       = `fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-5 py-3 rounded-2xl border backdrop-blur-md shadow-xl transition-all duration-300 ${c.bg} ${c.bd}`;
+  msg.className         = `text-sm font-semibold ${c.tx}`;
+  icon.textContent      = c.i;
+  msg.textContent       = message;
   toast.style.opacity       = '1';
   toast.style.transform     = 'translateY(0)';
   toast.style.pointerEvents = 'auto';
@@ -102,11 +180,10 @@ function hideToast() {
 // ── UI UPDATE ─────────────────────────────────────────────────────────────────
 
 /**
- * Refresh tampilan wallet di seluruh UI.
- * Alamat diambil LIVE dari _activeProvider (provider wallet yang dipilih user),
- * bukan dari window.ethereum, sehingga selalu sinkron dengan akun aktif.
+ * Refresh tampilan tombol wallet dan badge alamat.
  *
- * Format: substring(0,6) + '...' + substring(length-4)
+ * Alamat diambil LIVE dari _activeProvider (bukan window.ethereum),
+ * sehingga selalu sinkron dengan akun aktif di wallet yang dipilih user.
  */
 async function updateWalletUI() {
   const btn   = document.getElementById('wallet-btn');
@@ -115,28 +192,23 @@ async function updateWalletUI() {
   const badge = document.getElementById('wallet-address-badge');
   if (!btn) return;
 
-  // Ambil alamat live dari provider aktif (bukan window.ethereum)
+  // Ambil alamat terkini dari provider aktif (silent, tanpa popup)
   if (walletState.isConnected && _activeProvider) {
     try {
-      const liveAccounts = await _activeProvider.request({ method: 'eth_accounts' });
-
-      if (liveAccounts && liveAccounts.length > 0) {
-        // Alamat paling baru dari provider, otomatis sinkron jika user ganti akun
-        walletState.address = liveAccounts[0];
-        sessionStorage.setItem('wallet_address', liveAccounts[0]);
+      const live = await _activeProvider.request({ method: 'eth_accounts' });
+      if (live?.length > 0) {
+        walletState.address = live[0];
+        sessionStorage.setItem('wallet_address', live[0]);
       } else {
-        // Provider kosong: user cabut izin atau kunci wallet
-        _setDisconnected();
+        _clearState();
       }
-    } catch (_) {
-      // Gagal query provider, lanjut render dengan state yang ada
-    }
+    } catch (_) { /* lanjut dengan state yang ada */ }
   }
 
   if (walletState.isConnected && walletState.address) {
     const short = shortenAddress(walletState.address);
 
-    // ── CONNECTED ──────────────────────────────────────────────────────────
+    // CONNECTED
     btn.className = [
       'hidden md:inline-flex items-center gap-2',
       'bg-green-500/15 hover:bg-red-500/15',
@@ -156,13 +228,13 @@ async function updateWalletUI() {
       badge.innerHTML = `
         <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
         <span class="font-mono">${short}</span>
-        ${_activeWalletName ? `<span class="text-green-600 text-xs">${_activeWalletName}</span>` : ''}`;
+        ${_activeWalletName ? `<span class="text-green-600 text-xs">&middot; ${_activeWalletName}</span>` : ''}`;
       badge.className = 'mt-6 inline-flex items-center gap-2 bg-green-500/10 border border-green-500/30 text-green-400 text-sm px-4 py-2 rounded-full';
       badge.classList.remove('hidden');
     }
 
   } else {
-    // ── DISCONNECTED ───────────────────────────────────────────────────────
+    // DISCONNECTED
     btn.className = 'hidden md:inline-flex items-center gap-2 bg-crypto-purple hover:bg-purple-500 text-white text-sm font-semibold px-4 py-2 rounded-full transition-all duration-200 cursor-pointer';
     if (label) label.innerHTML = '<span>🔗 Connect Wallet</span>';
     if (dot)   dot.className   = 'w-2 h-2 rounded-full bg-white/50';
@@ -173,109 +245,105 @@ async function updateWalletUI() {
 // ── WALLET PICKER MODAL ───────────────────────────────────────────────────────
 
 /**
- * Tampilkan modal picker dengan semua wallet yang terdeteksi via EIP-6963.
- *
- * Setiap wallet menampilkan:
- *  - Ikon resmi wallet (base64 dari EIP-6963 info.icon)
- *  - Nama wallet (dari info.name)
- *
- * Jika tidak ada EIP-6963 wallet tapi window.ethereum ada (wallet lama),
- * fallback ke connect langsung via window.ethereum.
- * Jika tidak ada wallet sama sekali, tampilkan panduan install.
+ * Entry point saat user klik Connect Wallet.
+ * Beri waktu 80ms agar wallet yang lambat sempat announce via EIP-6963,
+ * lalu tentukan apakah perlu picker atau langsung connect.
  */
-function showWalletPickerModal() {
-  // Tambah delay kecil agar wallet lain punya waktu untuk announce
-  // (beberapa wallet memerlukan sedikit waktu setelah page load)
-  setTimeout(() => _renderWalletPickerModal(), 50);
+function connectWallet() {
+  // Re-broadcast request supaya wallet yang lambat announce tidak terlewat
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+
+  setTimeout(() => {
+    const wallets = _gatherWallets();
+
+    if (wallets.length === 0) {
+      _showNoWalletModal();
+    } else if (wallets.length === 1) {
+      // Hanya 1 wallet: langsung connect tanpa picker
+      _connectWith(wallets[0]);
+    } else {
+      // 2+ wallet: tampilkan picker
+      _showPickerModal(wallets);
+    }
+  }, 80);
 }
 
-function _renderWalletPickerModal() {
-  const existing = document.getElementById('wallet-picker-modal');
-  if (existing) existing.remove();
+function _showPickerModal(wallets) {
+  document.getElementById('wallet-picker-modal')?.remove();
 
-  // Kumpulkan semua wallet: EIP-6963 + fallback legacy
-  const walletList = [..._discoveredWallets.values()];
+  // Simpan wallets ke window sementara agar onclick bisa akses
+  window._walletPickerList = wallets;
 
-  // Jika tidak ada EIP-6963 wallet tapi window.ethereum ada (wallet lama)
-  if (walletList.length === 0 && typeof window.ethereum !== 'undefined') {
-    // Fallback: connect langsung via window.ethereum
-    _connectWithProvider(window.ethereum, 'Browser Wallet');
-    return;
-  }
+  const buttons = wallets.map((w, i) => {
+    const safeName = w.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // Tidak ada wallet sama sekali
-  if (walletList.length === 0) {
-    _showNoWalletModal();
-    return;
-  }
-
-  // Hanya 1 wallet terdeteksi: langsung connect tanpa perlu picker
-  if (walletList.length === 1) {
-    const { info, provider } = walletList[0];
-    _connectWithProvider(provider, info.name);
-    return;
-  }
-
-  // Lebih dari 1 wallet: tampilkan picker
-  const overlay = document.createElement('div');
-  overlay.id        = 'wallet-picker-modal';
-  overlay.className = 'fixed inset-0 z-[10001] flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm px-4 pb-4 sm:pb-0';
-
-  // Render daftar wallet
-  const walletButtons = walletList.map(({ info, provider }) => {
-    // Escape nama untuk keamanan (hindari XSS)
-    const safeName = info.name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const iconHtml = info.icon
-      ? `<img src="${info.icon}" alt="${safeName}" class="w-10 h-10 rounded-xl object-contain" />`
-      : `<div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-2xl">🔗</div>`;
+    // Ikon: base64 dari EIP-6963 info.icon, atau emoji fallback per nama
+    let iconHtml;
+    if (w.icon) {
+      iconHtml = `<img src="${w.icon}" alt="${safeName}" class="w-10 h-10 rounded-xl object-contain flex-shrink-0" />`;
+    } else {
+      const emojiMap = {
+        'MetaMask':        '🦊',
+        'Bitget Wallet':   '💼',
+        'Coinbase Wallet': '🔵',
+        'Brave Wallet':    '🦁',
+        'Trust Wallet':    '🛡️',
+        'Rabby':           '🐰',
+        'OKX Wallet':      '⭕',
+        'Rainbow':         '🌈',
+      };
+      const emoji = emojiMap[w.name] || '🔗';
+      iconHtml = `<div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-2xl flex-shrink-0">${emoji}</div>`;
+    }
 
     return `
       <button
-        onclick="_pickWallet('${info.uuid}')"
+        onclick="window._walletPickerList && _connectWith(window._walletPickerList[${i}]); _closePickerModal();"
         class="w-full flex items-center gap-4 px-5 py-4 rounded-2xl
-               bg-white/5 hover:bg-crypto-purple/20
-               border border-white/10 hover:border-crypto-purple/50
-               transition-all duration-200 text-left group"
+               bg-white/5 hover:bg-crypto-purple/15
+               border border-white/10 hover:border-crypto-purple/40
+               transition-all duration-150 text-left group"
       >
         ${iconHtml}
         <div class="flex-1 min-w-0">
-          <p class="font-bold text-white text-base group-hover:text-crypto-purple transition-colors">${safeName}</p>
-          <p class="text-slate-500 text-xs mt-0.5">Terdeteksi</p>
+          <p class="font-bold text-white text-sm group-hover:text-crypto-purple transition-colors">${safeName}</p>
+          <p class="text-slate-500 text-xs mt-0.5">Terdeteksi &middot; siap digunakan</p>
         </div>
-        <span class="text-slate-600 group-hover:text-crypto-purple transition-colors text-lg">&rarr;</span>
+        <span class="text-slate-600 group-hover:text-crypto-purple text-lg transition-colors">&rsaquo;</span>
       </button>`;
   }).join('');
 
+  const overlay = document.createElement('div');
+  overlay.id        = 'wallet-picker-modal';
+  overlay.className = 'fixed inset-0 z-[10002] flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm px-4 pb-4 sm:pb-0';
   overlay.innerHTML = `
-    <div class="absolute inset-0" onclick="_closeWalletPicker()"></div>
-    <div class="relative w-full max-w-sm bg-[#0F172A] border border-white/10 rounded-3xl shadow-2xl p-6 z-10">
+    <div class="absolute inset-0" onclick="_closePickerModal()"></div>
 
-      <!-- Handle (mobile) -->
-      <div class="flex justify-center mb-5">
-        <div class="w-10 h-1 bg-white/20 rounded-full"></div>
-      </div>
+    <div class="relative w-full max-w-sm bg-[#0F172A] border border-white/10 rounded-3xl shadow-2xl z-10 overflow-hidden">
 
       <!-- Header -->
-      <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center justify-between px-6 pt-6 pb-4 border-b border-white/5">
         <div>
-          <h3 class="text-xl font-black text-white">Pilih Wallet</h3>
-          <p class="text-slate-400 text-xs mt-1">${walletList.length} wallet terdeteksi di browser kamu</p>
+          <h3 class="text-lg font-black text-white">Pilih Wallet</h3>
+          <p class="text-slate-500 text-xs mt-0.5">${wallets.length} wallet terdeteksi</p>
         </div>
-        <button onclick="_closeWalletPicker()"
-          class="w-8 h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition text-lg">
+        <button onclick="_closePickerModal()"
+          class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition text-xl leading-none">
           &times;
         </button>
       </div>
 
-      <!-- Daftar wallet -->
-      <div class="space-y-3 mb-5">
-        ${walletButtons}
+      <!-- Wallet list -->
+      <div class="p-4 space-y-2.5 max-h-80 overflow-y-auto">
+        ${buttons}
       </div>
 
-      <!-- Info footer -->
-      <p class="text-slate-600 text-xs text-center leading-relaxed">
-        Tidak melihat wallet kamu? Pastikan extension-nya sudah aktif di browser.
-      </p>
+      <!-- Footer info -->
+      <div class="px-6 pb-5 pt-2">
+        <p class="text-slate-600 text-xs text-center">
+          Tidak melihat walletmu? Aktifkan extension-nya di browser terlebih dahulu.
+        </p>
+      </div>
     </div>
   `;
 
@@ -283,89 +351,74 @@ function _renderWalletPickerModal() {
   document.body.style.overflow = 'hidden';
 }
 
-/** Dipanggil saat user klik salah satu wallet di picker */
-function _pickWallet(uuid) {
-  const wallet = _discoveredWallets.get(uuid);
-  if (!wallet) return;
-  _closeWalletPicker();
-  _connectWithProvider(wallet.provider, wallet.info.name);
-}
-
-function _closeWalletPicker() {
-  const m = document.getElementById('wallet-picker-modal');
-  if (m) m.remove();
+function _closePickerModal() {
+  document.getElementById('wallet-picker-modal')?.remove();
   document.body.style.overflow = '';
+  delete window._walletPickerList;
 }
 
-// ── CONNECT ───────────────────────────────────────────────────────────────────
+// ── CONNECT DENGAN PROVIDER SPESIFIK ─────────────────────────────────────────
 
-/**
- * Connect menggunakan provider spesifik yang dipilih user.
- * Mendukung semua EIP-1193 compatible provider (MetaMask, Bitget, dll).
- */
-async function _connectWithProvider(provider, walletName) {
+async function _connectWith(wallet) {
+  const { name, provider } = wallet;
+
   const btn = document.getElementById('wallet-btn');
   const lbl = document.getElementById('wallet-btn-label');
-
-  if (btn) { btn.disabled = true; }
-  if (lbl) { lbl.innerHTML = '<span>Menghubungkan...</span>'; }
+  if (btn) btn.disabled = true;
+  if (lbl) lbl.innerHTML = `<span>Menghubungkan ${name}...</span>`;
 
   try {
-    // Minta izin akses akun (popup dari wallet yang dipilih)
     const accounts = await provider.request({ method: 'eth_requestAccounts' });
 
-    if (!accounts || accounts.length === 0) {
-      throw new Error('Tidak ada akun yang dipilih.');
-    }
+    if (!accounts?.length) throw new Error('Tidak ada akun yang dipilih.');
 
     const chainId = await provider.request({ method: 'eth_chainId' });
 
-    // Set provider aktif dan state
+    // Set provider aktif dan simpan state
     _activeProvider   = provider;
-    _activeWalletName = walletName;
+    _activeWalletName = name;
 
     walletState.address     = accounts[0];
     walletState.chainId     = chainId;
     walletState.isConnected = true;
 
-    sessionStorage.setItem('wallet_connected',    'true');
-    sessionStorage.setItem('wallet_address',      accounts[0]);
-    sessionStorage.setItem('wallet_provider_name', walletName);
+    sessionStorage.setItem('wallet_connected',     'true');
+    sessionStorage.setItem('wallet_address',       accounts[0]);
+    sessionStorage.setItem('wallet_provider_name', name);
 
-    // Pasang event listeners ke provider yang aktif ini
-    _setupActiveProviderListeners(provider);
+    // Pasang event listener ke provider yang aktif ini
+    _attachListeners(provider);
 
     // Update UI dengan alamat asli dari provider
     await updateWalletUI();
 
     if (chainId !== SUPPORTED_CHAIN_ID) {
-      showToast(`${walletName} terhubung, tapi kamu di jaringan lain. Ganti ke ${SUPPORTED_CHAIN_NAME} ya! ⚠️`, 'warning');
+      showToast(`${name} terhubung, tapi jaringannya bukan Mainnet. Ganti ke ${SUPPORTED_CHAIN_NAME} ya! ⚠️`, 'warning');
     } else {
-      showToast(`✅ ${walletName} terhubung! ${shortenAddress(accounts[0])}`, 'success');
+      showToast(`✅ ${name} terhubung! ${shortenAddress(accounts[0])}`, 'success');
     }
 
   } catch (err) {
-    if (err.code === 4001 || err.code === 'ACTION_REJECTED') {
+    const code = err?.code;
+    if (code === 4001 || code === 'ACTION_REJECTED') {
       showToast('Koneksi dibatalkan 😅', 'warning');
-    } else if (err.code === -32002) {
-      showToast(`Buka ${walletName} dan setujui permintaan koneksi`, 'info');
+    } else if (code === -32002) {
+      showToast(`Buka ${name} dan setujui permintaan koneksi`, 'info');
     } else {
-      showToast('Gagal connect: ' + (err.message || 'Error tidak diketahui'), 'error');
+      showToast('Gagal connect: ' + (err?.message || 'Error tidak diketahui'), 'error');
     }
   } finally {
-    if (btn) { btn.disabled = false; }
+    if (btn) btn.disabled = false;
     updateWalletUI();
   }
 }
 
-/** Entry point saat user klik tombol Connect Wallet */
-function connectWallet() {
-  showWalletPickerModal();
-}
-
 // ── DISCONNECT ────────────────────────────────────────────────────────────────
 
-function _setDisconnected() {
+function _clearState() {
+  const prev = walletState.address;
+  const name = _activeWalletName;
+
   walletState.address     = null;
   walletState.chainId     = null;
   walletState.isConnected = false;
@@ -375,14 +428,14 @@ function _setDisconnected() {
   sessionStorage.removeItem('wallet_connected');
   sessionStorage.removeItem('wallet_address');
   sessionStorage.removeItem('wallet_provider_name');
+
+  return { prev, name };
 }
 
 function disconnectWallet() {
-  const prev = walletState.address;
-  const name = _activeWalletName;
-  _setDisconnected();
+  const { prev, name } = _clearState();
   updateWalletUI();
-  showToast(`${name ? name + ' ' : ''}Wallet ${shortenAddress(prev)} disconnect. 👋`, 'info');
+  showToast(`${name ? name + ' ' : ''}${shortenAddress(prev)} disconnect. 👋`, 'info');
 }
 
 // ── BUTTON HANDLER ────────────────────────────────────────────────────────────
@@ -398,27 +451,23 @@ function handleWalletButtonClick() {
 // ── EVENT LISTENERS ───────────────────────────────────────────────────────────
 
 /**
- * Pasang listener ke provider yang sedang aktif saja.
- * Ini penting agar kita tidak bereaksi ke event dari wallet lain
- * yang tidak sedang dipakai user.
+ * Pasang listener HANYA ke provider yang aktif, bukan ke semua window.ethereum.
+ * Ini mencegah false event dari wallet yang tidak sedang digunakan.
  */
-function _setupActiveProviderListeners(provider) {
-  if (!provider || !provider.on) return;
+function _attachListeners(provider) {
+  if (!provider?.on) return;
 
-  // Deteksi ganti akun: update alamat secara otomatis
   provider.on('accountsChanged', (accounts) => {
-    if (!accounts || accounts.length === 0) {
+    if (!accounts?.length) {
       disconnectWallet();
     } else {
       walletState.address = accounts[0];
       sessionStorage.setItem('wallet_address', accounts[0]);
-      // updateWalletUI akan fetch ulang dari provider, tampilkan alamat baru
       updateWalletUI();
       showToast(`Akun berganti ke ${shortenAddress(accounts[0])} 🔄`, 'info');
     }
   });
 
-  // Deteksi ganti jaringan
   provider.on('chainChanged', (chainId) => {
     walletState.chainId = chainId;
     if (chainId !== SUPPORTED_CHAIN_ID) {
@@ -428,78 +477,58 @@ function _setupActiveProviderListeners(provider) {
     }
   });
 
-  // Beberapa wallet (Coinbase, Bitget) emit event 'disconnect'
-  provider.on('disconnect', () => {
-    disconnectWallet();
-  });
+  // Beberapa wallet emit event disconnect (Bitget, Coinbase, dll)
+  provider.on('disconnect', () => disconnectWallet());
 }
 
-// ── NO WALLET INSTALLED ───────────────────────────────────────────────────────
+// ── MODAL: TIDAK ADA WALLET ───────────────────────────────────────────────────
 
 function _showNoWalletModal() {
-  const existing = document.getElementById('no-wallet-modal');
-  if (existing) existing.remove();
+  document.getElementById('no-wallet-modal')?.remove();
 
   const overlay = document.createElement('div');
   overlay.id        = 'no-wallet-modal';
-  overlay.className = 'fixed inset-0 z-[10001] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4 pb-4 sm:pb-0';
+  overlay.className = 'fixed inset-0 z-[10002] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4 pb-4 sm:pb-0';
   overlay.innerHTML = `
     <div class="absolute inset-0" onclick="document.getElementById('no-wallet-modal').remove(); document.body.style.overflow='';"></div>
-    <div class="relative w-full max-w-sm bg-[#0F172A] border border-white/10 rounded-3xl shadow-2xl p-7 z-10">
+    <div class="relative w-full max-w-sm bg-[#0F172A] border border-white/10 rounded-3xl shadow-2xl p-6 z-10">
 
-      <div class="flex justify-center mb-5"><div class="w-10 h-1 bg-white/20 rounded-full"></div></div>
+      <div class="flex justify-center mb-5">
+        <div class="w-10 h-1 bg-white/20 rounded-full"></div>
+      </div>
 
-      <div class="text-center mb-6">
+      <div class="text-center mb-5">
         <div class="text-5xl mb-3">🔍</div>
-        <h3 class="text-xl font-black mb-1">Wallet Tidak Ditemukan</h3>
-        <p class="text-slate-400 text-sm">Tidak ada wallet extension yang terdeteksi di browser kamu.</p>
+        <h3 class="text-xl font-black text-white mb-1">Wallet Tidak Ditemukan</h3>
+        <p class="text-slate-400 text-sm">Tidak ada wallet extension yang aktif di browser kamu.</p>
       </div>
 
-      <!-- Opsi install wallet -->
-      <div class="space-y-3 mb-5">
-
-        <!-- MetaMask -->
+      <div class="space-y-3 mb-4">
         <a href="https://metamask.io/download/" target="_blank" rel="noopener"
-          class="flex items-center gap-4 px-5 py-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 hover:border-orange-500/50 hover:bg-orange-500/15 transition group">
-          <span class="text-3xl">🦊</span>
-          <div class="flex-1">
-            <p class="font-bold text-white">MetaMask</p>
-            <p class="text-slate-500 text-xs">Install extension gratis</p>
-          </div>
-          <span class="text-orange-500 text-sm font-bold group-hover:translate-x-0.5 transition-transform">&rarr;</span>
+          class="flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-orange-500/10 border border-orange-500/20 hover:border-orange-500/40 hover:bg-orange-500/15 transition group">
+          <span class="text-2xl">🦊</span>
+          <div class="flex-1"><p class="font-bold text-white text-sm">MetaMask</p><p class="text-slate-500 text-xs">Install extension gratis</p></div>
+          <span class="text-orange-500 text-sm font-bold">&rarr;</span>
         </a>
-
-        <!-- Bitget Wallet -->
         <a href="https://web3.bitget.com/en/wallet-download" target="_blank" rel="noopener"
-          class="flex items-center gap-4 px-5 py-4 rounded-2xl bg-sky-500/10 border border-sky-500/20 hover:border-sky-500/50 hover:bg-sky-500/15 transition group">
-          <span class="text-3xl">💼</span>
-          <div class="flex-1">
-            <p class="font-bold text-white">Bitget Wallet</p>
-            <p class="text-slate-500 text-xs">Install extension gratis</p>
-          </div>
-          <span class="text-sky-500 text-sm font-bold group-hover:translate-x-0.5 transition-transform">&rarr;</span>
+          class="flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-sky-500/10 border border-sky-500/20 hover:border-sky-500/40 hover:bg-sky-500/15 transition group">
+          <span class="text-2xl">💼</span>
+          <div class="flex-1"><p class="font-bold text-white text-sm">Bitget Wallet</p><p class="text-slate-500 text-xs">Install extension gratis</p></div>
+          <span class="text-sky-400 text-sm font-bold">&rarr;</span>
         </a>
-
       </div>
 
-      <!-- Opsi Mobile -->
-      <div class="bg-[#1E293B] rounded-2xl p-5 border border-white/5 mb-4">
-        <div class="flex items-center gap-3 mb-3">
-          <span class="text-xl">📱</span>
-          <p class="font-bold text-slate-300 text-sm">Pakai HP? Buka via Browser Wallet</p>
-        </div>
+      <div class="bg-[#1E293B] rounded-2xl p-4 border border-white/5 mb-4">
         <p class="text-slate-400 text-xs leading-relaxed mb-3">
-          Buka aplikasi MetaMask atau Bitget di HP kamu, lalu buka website ini melalui tab <strong class="text-white">Browser</strong> di dalam aplikasinya.
+          <strong class="text-white">Pakai HP?</strong> Buka MetaMask atau Bitget di HP kamu, lalu buka website ini melalui tab <strong class="text-white">Browser</strong> di dalam aplikasinya.
         </p>
-        <button
-          onclick="copyUrlToClipboard()"
+        <button onclick="copyUrlToClipboard()"
           class="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-xs font-semibold py-2.5 rounded-xl transition">
           📋 Salin URL Halaman Ini
         </button>
       </div>
 
-      <button
-        onclick="document.getElementById('no-wallet-modal').remove(); document.body.style.overflow='';"
+      <button onclick="document.getElementById('no-wallet-modal').remove(); document.body.style.overflow='';"
         class="w-full py-2 text-slate-500 hover:text-white text-sm transition">Tutup</button>
     </div>
   `;
@@ -508,62 +537,41 @@ function _showNoWalletModal() {
   document.body.style.overflow = 'hidden';
 }
 
-/** Salin URL halaman ke clipboard */
 function copyUrlToClipboard() {
-  navigator.clipboard?.writeText(window.location.href).then(() => {
-    showToast('URL disalin! Buka di browser wallet kamu 📱', 'success');
-  }).catch(() => {
-    showToast('URL: ' + window.location.href, 'info');
-  });
+  navigator.clipboard?.writeText(window.location.href)
+    .then(() => showToast('URL disalin! Buka di browser wallet kamu 📱', 'success'))
+    .catch(() => showToast('URL: ' + window.location.href, 'info'));
 }
 
 // ── RESTORE SESSION ───────────────────────────────────────────────────────────
 
-/**
- * Coba pulihkan session dari sebelumnya tanpa popup.
- * Cocokkan alamat di sessionStorage dengan akun aktif di provider.
- *
- * Karena EIP-6963 listener dipasang sebelum DOMContentLoaded,
- * wallet sudah sempat announce diri sebelum restoreSession dipanggil.
- */
 async function restoreSession() {
   const wasSaved    = sessionStorage.getItem('wallet_connected');
   const savedAddr   = sessionStorage.getItem('wallet_address');
-  const savedWallet = sessionStorage.getItem('wallet_provider_name');
+  const savedName   = sessionStorage.getItem('wallet_provider_name') || '';
 
   if (!wasSaved || !savedAddr) return;
 
-  // Cari provider yang cocok: coba semua EIP-6963 wallet dulu
-  const walletList = [..._discoveredWallets.values()];
-  let restoredProvider   = null;
-  let restoredWalletName = savedWallet || 'Wallet';
+  // Re-request agar wallet yang belum announce sempat merespons
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+  await new Promise(r => setTimeout(r, 80)); // beri waktu announce
 
-  for (const { info, provider } of walletList) {
+  const wallets = _gatherWallets();
+  let restoredWallet = null;
+
+  // Cari provider yang punya akun sama dengan yang tersimpan
+  for (const w of wallets) {
     try {
-      const accounts = await provider.request({ method: 'eth_accounts' });
-      if (accounts && accounts.length > 0 &&
-          accounts[0].toLowerCase() === savedAddr.toLowerCase()) {
-        restoredProvider   = provider;
-        restoredWalletName = info.name;
+      const accs = await w.provider.request({ method: 'eth_accounts' });
+      if (accs?.length && accs[0].toLowerCase() === savedAddr.toLowerCase()) {
+        restoredWallet = w;
         break;
       }
-    } catch (_) { /* provider gagal diquery, skip */ }
+    } catch (_) { /* skip provider yang error */ }
   }
 
-  // Fallback ke window.ethereum jika tidak ketemu di EIP-6963
-  if (!restoredProvider && typeof window.ethereum !== 'undefined') {
-    try {
-      const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-      if (accounts && accounts.length > 0 &&
-          accounts[0].toLowerCase() === savedAddr.toLowerCase()) {
-        restoredProvider   = window.ethereum;
-        restoredWalletName = savedWallet || 'Browser Wallet';
-      }
-    } catch (_) { /* ignore */ }
-  }
-
-  if (!restoredProvider) {
-    // Tidak bisa restore, bersihkan session
+  if (!restoredWallet) {
+    // Tidak bisa temukan provider yang cocok, bersihkan session
     sessionStorage.removeItem('wallet_connected');
     sessionStorage.removeItem('wallet_address');
     sessionStorage.removeItem('wallet_provider_name');
@@ -571,19 +579,19 @@ async function restoreSession() {
   }
 
   try {
-    const chainId = await restoredProvider.request({ method: 'eth_chainId' });
+    const chainId = await restoredWallet.provider.request({ method: 'eth_chainId' });
 
-    _activeProvider   = restoredProvider;
-    _activeWalletName = restoredWalletName;
+    _activeProvider   = restoredWallet.provider;
+    _activeWalletName = restoredWallet.name;
 
     walletState.address     = savedAddr;
     walletState.chainId     = chainId;
     walletState.isConnected = true;
 
-    _setupActiveProviderListeners(restoredProvider);
+    _attachListeners(restoredWallet.provider);
     await updateWalletUI();
 
-    showToast(`${restoredWalletName} ${shortenAddress(savedAddr)} terhubung kembali 🔗`, 'success');
+    showToast(`${restoredWallet.name} ${shortenAddress(savedAddr)} terhubung kembali 🔗`, 'success');
 
   } catch (_) {
     sessionStorage.removeItem('wallet_connected');
@@ -595,21 +603,15 @@ async function restoreSession() {
 // ── INIT ──────────────────────────────────────────────────────────────────────
 
 function initWallet() {
-  // Pasang event listener ke tombol wallet
   ['wallet-btn', 'wallet-btn-mobile'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', handleWalletButtonClick);
   });
 
-  // Render UI awal (disconnected state)
   updateWalletUI();
 
-  // Re-request announce agar wallet yang lambat tidak terlewat
-  window.dispatchEvent(new Event('eip6963:requestProvider'));
-
-  // Restore session setelah sedikit delay
-  // (memberi waktu wallet extension untuk announce diri)
-  setTimeout(restoreSession, 100);
+  // Restore session setelah 120ms (beri wallet waktu announce via EIP-6963)
+  setTimeout(restoreSession, 120);
 }
 
 if (document.readyState === 'loading') {
