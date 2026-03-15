@@ -1,5 +1,5 @@
 /**
- * quiz.js — KriptoEdu Checkpoint Kuis System
+ * quiz.js - KriptoEdu Checkpoint Kuis System
  * RAH-17: Sistem gembok kuis interaktif di tengah materi
  *
  * Fitur:
@@ -11,12 +11,12 @@
  *  - Tombol retry tanpa reload halaman
  */
 
-// ─── DATA SOAL ────────────────────────────────────────────────────────────────
+// DATA SOAL
 const QUIZ_DATA = [
   {
     id: 'q1',
     theme: 'blue',
-    badge: '🔐 Kuis Keamanan',
+    badge: '\uD83D\uDD10 Kuis Keamanan',
     number: 1,
     unlocks: 'lock-bitcoin',
     question: 'Kamu baru saja membuat wallet MetaMask dan mendapatkan seed phrase. Apa yang sebaiknya kamu lakukan?',
@@ -26,12 +26,12 @@ const QUIZ_DATA = [
       { text: 'Kirim ke email sendiri agar mudah diakses kapan saja', correct: false },
       { text: 'Simpan di notes HP dan backup ke cloud', correct: false },
     ],
-    explanation: '🌟 Tepat! Seed phrase adalah kunci master wallet kamu. Satu-satunya cara aman adalah tulis tangan di kertas dan simpan offline. Jangan pernah simpan secara digital atau bagikan ke siapapun — tidak ada layanan legitimate yang akan memintanya.',
+    explanation: '\uD83C\uDF1F Tepat! Seed phrase adalah kunci master wallet kamu. Satu-satunya cara aman adalah tulis tangan di kertas dan simpan offline. Jangan pernah simpan secara digital atau bagikan ke siapapun. Tidak ada layanan legitimate yang akan memintanya.',
   },
   {
     id: 'q2',
     theme: 'purple',
-    badge: '🌐 Kuis Jaringan',
+    badge: '\uD83C\uDF10 Kuis Jaringan',
     number: 2,
     unlocks: 'lock-materi',
     question: 'Temanmu minta kamu kirim USDT ke alamatnya. Dia bilang "kirim lewat jaringan BEP-20 ya". Apa bedanya dengan ERC-20?',
@@ -41,12 +41,12 @@ const QUIZ_DATA = [
       { text: 'BEP-20 lebih canggih dan bisa menggantikan semua fungsi ERC-20', correct: false },
       { text: 'ERC-20 hanya untuk Bitcoin, BEP-20 untuk semua altcoin', correct: false },
     ],
-    explanation: '🌟 Keren! ERC-20 berjalan di atas jaringan Ethereum (ETH dipakai untuk biaya gas), sementara BEP-20 berjalan di Binance Smart Chain (BNB untuk biaya gas). Pastikan selalu pilih jaringan yang sama dengan tujuan — salah jaringan bisa bikin koin hilang permanen!',
+    explanation: '\uD83C\uDF1F Keren! ERC-20 berjalan di atas jaringan Ethereum (ETH dipakai untuk biaya gas), sementara BEP-20 berjalan di Binance Smart Chain (BNB untuk biaya gas). Pastikan selalu pilih jaringan yang sama dengan tujuan, karena salah jaringan bisa bikin koin hilang permanen!',
   },
   {
     id: 'q3',
     theme: 'gold',
-    badge: '💼 Kuis Wallet',
+    badge: '\uD83D\uDCBC Kuis Wallet',
     number: 3,
     unlocks: 'lock-features',
     question: 'Kamu punya 10 ETH hasil kerja keras selama setahun. Mana strategi penyimpanan yang paling aman untuk jangka panjang?',
@@ -56,11 +56,11 @@ const QUIZ_DATA = [
       { text: 'Bagi ke beberapa exchange berbeda supaya risikonya tersebar', correct: false },
       { text: 'Simpan di hot wallet MetaMask karena lebih mudah dipantau', correct: false },
     ],
-    explanation: '🌟 Jawaban terbaik! Cold wallet menyimpan private key offline sehingga tidak bisa diretas secara remote. Ingat: exchange bisa bangkrut, di-hack, atau membekukan akun (contoh: FTX 2022). "Not your keys, not your coins" — kalau koin ada di exchange, kamu hanya pegang IOU.',
+    explanation: '\uD83C\uDF1F Jawaban terbaik! Cold wallet menyimpan private key offline sehingga tidak bisa diretas secara remote. Ingat: exchange bisa bangkrut, di-hack, atau membekukan akun (contoh: FTX 2022). "Not your keys, not your coins". Kalau koin ada di exchange, kamu hanya pegang IOU.',
   },
 ];
 
-// ─── STATE ────────────────────────────────────────────────────────────────
+// STATE
 const STORAGE_KEY = 'kriptoedu_quiz_progress';
 
 function loadProgress() {
@@ -77,14 +77,14 @@ function saveProgress(id) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
 }
 
-// ─── THEME CONFIG ──────────────────────────────────────────────────────────────
+// THEME CONFIG
 const THEMES = {
   blue:   { accent: '#1DA1F2', border: 'border-blue-500/30',   bg: 'bg-blue-500/10',   text: 'text-blue-300',   btn: 'bg-blue-500 hover:bg-blue-400',   ring: 'ring-blue-500/40'   },
   purple: { accent: '#7C3AED', border: 'border-purple-500/30', bg: 'bg-purple-500/10', text: 'text-purple-300', btn: 'bg-purple-600 hover:bg-purple-500', ring: 'ring-purple-500/40' },
   gold:   { accent: '#F59E0B', border: 'border-yellow-500/30', bg: 'bg-yellow-500/10', text: 'text-yellow-300', btn: 'bg-yellow-500 hover:bg-yellow-400 text-gray-900', ring: 'ring-yellow-500/40' },
 };
 
-// ─── RENDER QUIZ ──────────────────────────────────────────────────────────────
+// RENDER QUIZ
 function renderQuiz(data) {
   const t   = THEMES[data.theme];
   const ctn = document.getElementById(`quiz-${data.id}`);
@@ -150,7 +150,7 @@ function renderQuiz(data) {
           class="w-full py-4 rounded-2xl font-black text-lg transition-all duration-200
                  bg-white/5 text-slate-600 cursor-not-allowed border border-white/10"
         >
-          Pilih salah satu jawaban dulu ↑
+          Pilih salah satu jawaban dulu &uarr;
         </button>
       </div>
 
@@ -158,7 +158,7 @@ function renderQuiz(data) {
   `;
 }
 
-// ─── SELECT OPTION ────────────────────────────────────────────────────────────
+// SELECT OPTION
 let selectedAnswers = {};
 
 function selectOption(quizId, index) {
@@ -196,11 +196,11 @@ function selectOption(quizId, index) {
       .replace('bg-white/5 text-slate-600 cursor-not-allowed border border-white/10', '');
     submitBtn.className += ` ${t.btn} text-white cursor-pointer ring-0`;
     submitBtn.style.background = t.accent;
-    submitBtn.textContent = '✓ Konfirmasi Jawaban';
+    submitBtn.textContent = '\u2713 Konfirmasi Jawaban';
   }
 }
 
-// ─── SUBMIT QUIZ ────────────────────────────────────────────────────────────
+// SUBMIT QUIZ
 function submitQuiz(quizId) {
   const data    = QUIZ_DATA.find(q => q.id === quizId);
   const chosen  = selectedAnswers[quizId];
@@ -225,7 +225,7 @@ function submitQuiz(quizId) {
   }
 }
 
-// ─── CORRECT HANDLER ─────────────────────────────────────────────────────────
+// CORRECT HANDLER
 function onCorrect(data, chosenIdx) {
   const t = THEMES[data.theme];
 
@@ -243,7 +243,7 @@ function onCorrect(data, chosenIdx) {
     fb.className = 'bg-green-500/10 border border-green-500/30 rounded-2xl p-5';
     fb.innerHTML = `
       <div class="flex items-start gap-3">
-        <span class="text-2xl shrink-0">🌟</span>
+        <span class="text-2xl shrink-0">\uD83C\uDF1F</span>
         <div>
           <p class="font-black text-green-400 mb-1">Jawaban Benar! Keren!</p>
           <p class="text-slate-300 text-sm leading-relaxed">${data.explanation}</p>
@@ -264,9 +264,9 @@ function onCorrect(data, chosenIdx) {
                flex items-center justify-center gap-3
                shadow-lg shadow-green-500/20"
       >
-        <span class="text-xl">🔓</span>
+        <span class="text-xl">\uD83D\uDD13</span>
         <span>Buka Materi Selanjutnya!</span>
-        <span class="text-xl">↓</span>
+        <span class="text-xl">\u2193</span>
       </button>
     `;
   }
@@ -278,7 +278,7 @@ function onCorrect(data, chosenIdx) {
   launchStars(document.getElementById(`quiz-${data.id}`));
 }
 
-// ─── WRONG HANDLER ───────────────────────────────────────────────────────────
+// WRONG HANDLER
 function onWrong(data, chosenIdx) {
   // Highlight jawaban yang dipilih (merah)
   const chosenBtn = document.querySelector(`#options-${data.id} [data-index='${chosenIdx}']`);
@@ -296,7 +296,7 @@ function onWrong(data, chosenIdx) {
     fb.className = 'bg-red-500/10 border border-red-500/30 rounded-2xl p-5';
     fb.innerHTML = `
       <div class="flex items-start gap-3">
-        <span class="text-2xl shrink-0">🤔</span>
+        <span class="text-2xl shrink-0">\uD83E\uDD14</span>
         <div>
           <p class="font-black text-red-400 mb-1">Kurang tepat, coba lagi!</p>
           <p class="text-slate-300 text-sm leading-relaxed">Baca ulang materi di atas dan perhatikan baik-baik ya. Kamu pasti bisa!</p>
@@ -316,20 +316,20 @@ function onWrong(data, chosenIdx) {
                transition cursor-pointer
                flex items-center justify-center gap-3"
       >
-        <span>🔄</span>
+        <span>\uD83D\uDD04</span>
         <span>Coba Lagi</span>
       </button>
     `;
   }
 }
 
-// ─── RETRY ─────────────────────────────────────────────────────────────────────
+// RETRY
 function retryQuiz(quizId) {
   delete selectedAnswers[quizId];
   renderQuiz(QUIZ_DATA.find(q => q.id === quizId));
 }
 
-// ─── UNLOCK SECTION ────────────────────────────────────────────────────────────
+// UNLOCK SECTION
 function unlockSection(quizId, lockId) {
   const lockEl = document.getElementById(lockId);
   if (!lockEl) return;
@@ -360,7 +360,7 @@ function unlockSection(quizId, lockId) {
     }, 300);
   }, 350);
 
-  // Tandai kuis sebagai selesai (tampilkan badge ✅)
+  // Tandai kuis sebagai selesai
   const quizCard = document.getElementById(`quiz-${quizId}`);
   if (quizCard) {
     quizCard.style.transition = 'opacity 0.4s';
@@ -369,11 +369,11 @@ function unlockSection(quizId, lockId) {
   }
 }
 
-// ─── REWARD ANIMATION ──────────────────────────────────────────────────────────
+// REWARD ANIMATION
 function launchStars(container) {
   if (!container) return;
   const rect   = container.getBoundingClientRect();
-  const emojis = ['⭐', '🌟', '✨', '🎉', '💫', '🔓'];
+  const emojis = ['\u2B50', '\uD83C\uDF1F', '\u2728', '\uD83C\uDF89', '\uD83D\uDCAB', '\uD83D\uDD13'];
 
   for (let i = 0; i < 18; i++) {
     setTimeout(() => {
@@ -402,7 +402,7 @@ function launchStars(container) {
   }
 }
 
-// ─── GATE (gembok materi) ─────────────────────────────────────────────────────
+// GATE (gembok materi)
 function renderGate(lockId, label) {
   const gateContainer = document.getElementById(`gate-${lockId}`);
   if (!gateContainer) return;
@@ -412,7 +412,7 @@ function renderGate(lockId, label) {
       <div class="relative">
         <div class="w-20 h-20 rounded-full bg-white/5 border border-white/15 flex items-center justify-center text-4xl
                     animate-pulse">
-          🔒
+          \uD83D\uDD12
         </div>
         <div class="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-red-500 border-2 border-[#0F172A]
                     flex items-center justify-center text-xs font-black text-white">
@@ -424,50 +424,40 @@ function renderGate(lockId, label) {
         <p class="text-slate-400 text-sm">Jawab kuis di atas untuk membuka materi ini</p>
       </div>
       <div class="flex items-center gap-2 bg-white/5 border border-white/10 rounded-full px-5 py-2">
-        <span class="text-slate-500 text-xs">↑ Scroll ke atas dan jawab kuis terlebih dahulu</span>
+        <span class="text-slate-500 text-xs">\u2191 Scroll ke atas dan jawab kuis terlebih dahulu</span>
       </div>
     </div>
   `;
 }
 
-// ─── INIT ─────────────────────────────────────────────────────────────────────
+// INIT
 function initQuizSystem() {
   const progress = loadProgress();
 
   QUIZ_DATA.forEach(data => {
-    // Render soal kuis
     renderQuiz(data);
 
-    const lockEl   = document.getElementById(data.unlocks);
-    const gateEl   = document.getElementById(`gate-${data.unlocks}`);
+    const lockEl = document.getElementById(data.unlocks);
+    const gateEl = document.getElementById(`gate-${data.unlocks}`);
 
     if (progress[data.id]) {
-      // Sudah pernah benar → langsung unlock, render tanpa animasi
+      // Sudah pernah benar, langsung unlock tanpa animasi
       if (lockEl) {
         lockEl.classList.remove('hidden');
         lockEl.style.opacity = '1';
       }
       if (gateEl) gateEl.remove();
 
-      // Tandai kuis sebagai selesai
       const quizCard = document.getElementById(`quiz-${data.id}`);
       if (quizCard) {
-        // Re-render sebagai completed state
-        const t = THEMES[data.theme];
-        const card = quizCard.querySelector('.quiz-card');
-        if (card) {
-          const badge = card.querySelector('[class*="quiz-card"]');
-          // Tambahkan completed badge
-        }
         quizCard.style.opacity = '0.65';
         quizCard.style.pointerEvents = 'none';
 
-        // Inject completed overlay
         const overlay = document.createElement('div');
         overlay.className = 'absolute inset-0 rounded-3xl bg-green-500/5 border border-green-500/20 flex items-center justify-center pointer-events-none z-10';
         overlay.innerHTML = `
           <div class="bg-green-500/20 border border-green-500/40 text-green-400 font-black text-sm px-5 py-2 rounded-full flex items-center gap-2">
-            <span>✅</span> Kuis Selesai
+            <span>\u2705</span> Kuis Selesai
           </div>
         `;
         const cardEl = quizCard.querySelector('.quiz-card');
@@ -477,7 +467,7 @@ function initQuizSystem() {
         }
       }
     } else {
-      // Belum benar → tampilkan gate
+      // Belum benar, tampilkan gate
       if (lockEl) lockEl.classList.add('hidden');
       const labels = {
         'lock-bitcoin':  'Materi Bitcoin Terkunci',
@@ -503,7 +493,6 @@ styleEl.textContent = `
 `;
 document.head.appendChild(styleEl);
 
-// Jalankan setelah DOM siap
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initQuizSystem);
 } else {
