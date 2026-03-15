@@ -8,11 +8,19 @@
  * Lapis 3 — window.bitkeep.ethereum     (SYNC, slot khusus Bitget)
  * Lapis 4 — EIP-6963                   (ASYNC, untuk nama + ikon resmi)
  *
- * Setiap lapis dibungkus try-catch individual agar error satu lapis
- * tidak membuat lapis lain ikut gagal.
+ * Mobile Chrome tanpa wallet browser:
+ *   Tidak ada window.ethereum di Chrome biasa di HP.
+ *   Solusi: Universal Deep Link ke MetaMask / Bitget app.
+ *   Setelah user membuka dApp via wallet browser, window.ethereum tersedia
+ *   dan flow connect berjalan normal seperti biasa.
  *
- * Jaminan tombol: setelah connect berhasil, label SEMUA tombol wallet
- * (desktop + mobile) langsung dirender SYNCHRONOUSLY dengan alamat asli.
+ *   Deep link yang digunakan:
+ *     MetaMask : https://metamask.app.link/dapp/{host}
+ *     Bitget   : https://bkcode.vip/?action=dapp&url={encoded_url}
+ *     Trust    : https://link.trustwallet.com/open_url?url={encoded_url}
+ *
+ *   Ini adalah standar resmi masing-masing wallet — tidak ada CDN,
+ *   tidak ada WalletConnect Project ID, tidak bisa error karena library.
  */
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -50,10 +58,51 @@ function shortenAddress(addr) {
   return addr.substring(0, 6) + '...' + addr.substring(addr.length - 4);
 }
 
+/** Apakah perangkat ini mobile? */
+function _isMobile() {
+  return /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+/**
+ * Apakah browser ini adalah in-app browser dari wallet?
+ * Jika ya, window.ethereum sudah tersedia dan flow normal bisa berjalan.
+ * Jika tidak (Chrome/Safari biasa di HP), perlu deep link.
+ */
+function _isWalletBrowser() {
+  try {
+    const eth = window.ethereum;
+    if (!eth) return false;
+    // MetaMask mobile browser, Bitget, Trust, Coinbase, Brave
+    return !!(
+      eth.isMetaMask || eth.isBitKeep || eth.isBitget ||
+      eth.isTrust || eth.isTrustWallet ||
+      eth.isCoinbaseWallet || eth.isCoinbaseBrowser ||
+      eth.isBraveWallet || eth.isRabby
+    );
+  } catch (_) { return false; }
+}
+
+/**
+ * Bangun deep link URL untuk membuka dApp di dalam wallet browser.
+ *
+ * MetaMask : metamask.app.link/dapp/{hostname}
+ * Bitget   : bkcode.vip/?action=dapp&url={full_url}
+ * Trust    : link.trustwallet.com/open_url?url={full_url}
+ */
+function _buildDeepLink(wallet) {
+  const url  = encodeURIComponent(window.location.href);
+  const host = window.location.hostname + window.location.pathname;
+  switch (wallet) {
+    case 'metamask': return `https://metamask.app.link/dapp/${host}`;
+    case 'bitget':   return `https://bkcode.vip/?action=dapp&url=${url}`;
+    case 'trust':    return `https://link.trustwallet.com/open_url?url=${url}`;
+    default:         return null;
+  }
+}
+
 /**
  * Deteksi nama wallet dari property yang di-inject.
- * Seluruh akses property dibungkus try-catch karena beberapa wallet
- * menggunakan Proxy/getter yang bisa throw.
+ * Dibungkus try-catch karena beberapa wallet pakai Proxy/getter yang bisa throw.
  */
 function _detectName(p) {
   try {
@@ -165,18 +214,10 @@ function hideToast() {
 
 /**
  * Render SEMUA tombol wallet saat TERHUBUNG.
- *
- * Menarget:
- *   - #wallet-btn        : tombol desktop di navbar
- *   - #wallet-btn-mobile : tombol mobile di navbar
- *   - #wallet-address-badge : badge alamat di hero section
- *
- * Tombol mobile menampilkan alamat terpotong dalam format compact.
- * Fungsi ini SYNCHRONOUS — tidak ada await, label berubah SEGERA.
+ * SYNCHRONOUS — tidak ada await, label berubah SEGERA.
  */
 function _renderConnected(short) {
   try {
-    // ── Desktop button ──────────────────────────────────────────────────────
     const btn   = document.getElementById('wallet-btn');
     const label = document.getElementById('wallet-btn-label');
     const dot   = document.getElementById('wallet-btn-dot');
@@ -203,9 +244,6 @@ function _renderConnected(short) {
       dot.className = 'w-2 h-2 rounded-full bg-green-400 group-hover:bg-red-400 transition-colors animate-pulse';
     }
 
-    // ── Mobile button ───────────────────────────────────────────────────────
-    // Tampilkan alamat terpotong langsung (tanpa hover effect karena compact).
-    // Warna hijau untuk indikasi terhubung. Tap = disconnect.
     const btnMobile = document.getElementById('wallet-btn-mobile');
     if (btnMobile) {
       btnMobile.className = [
@@ -217,13 +255,11 @@ function _renderConnected(short) {
         'transition-all duration-200 cursor-pointer',
       ].join(' ');
       btnMobile.disabled = false;
-      // Tampilkan alamat terpotong — BUKAN teks statis
       btnMobile.innerHTML = `
         <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse flex-shrink-0"></span>
         <span>${short}</span>`;
     }
 
-    // ── Badge di hero ───────────────────────────────────────────────────────
     const badge = document.getElementById('wallet-address-badge');
     if (badge) {
       badge.innerHTML = `
@@ -236,13 +272,8 @@ function _renderConnected(short) {
   } catch (_) {}
 }
 
-/**
- * Render SEMUA tombol wallet saat TIDAK TERHUBUNG.
- * Menarget desktop + mobile sekaligus. Juga synchronous.
- */
 function _renderDisconnected() {
   try {
-    // ── Desktop button ──────────────────────────────────────────────────────
     const btn   = document.getElementById('wallet-btn');
     const label = document.getElementById('wallet-btn-label');
     const dot   = document.getElementById('wallet-btn-dot');
@@ -256,7 +287,6 @@ function _renderDisconnected() {
     if (dot)   dot.className   = 'w-2 h-2 rounded-full bg-white/50';
     if (badge) badge.classList.add('hidden');
 
-    // ── Mobile button ───────────────────────────────────────────────────────
     const btnMobile = document.getElementById('wallet-btn-mobile');
     if (btnMobile) {
       btnMobile.className = 'flex items-center gap-2 bg-crypto-purple/80 hover:bg-crypto-purple text-white text-xs font-semibold px-3 py-1.5 rounded-full transition-all duration-200 cursor-pointer';
@@ -266,11 +296,6 @@ function _renderDisconnected() {
   } catch (_) {}
 }
 
-/**
- * Async refresh: ambil alamat terkini dari provider aktif.
- * Hanya untuk sinkronisasi jika user ganti akun.
- * UI utama sudah dirender oleh _renderConnected/_renderDisconnected.
- */
 async function updateWalletUI() {
   if (!walletState.isConnected || !_activeProvider) {
     _renderDisconnected();
@@ -297,6 +322,16 @@ async function updateWalletUI() {
 
 // ── CONNECT: ENTRY POINT ──────────────────────────────────────────────────────
 
+/**
+ * Alur lengkap saat user klik Connect Wallet:
+ *
+ * 1. Cek sync: apakah window.ethereum sudah tersedia? (wallet browser atau extension)
+ *    → Ya: tampilkan picker atau langsung connect
+ *
+ * 2. Tidak ada wallet sync. Apakah ini mobile Chrome (bukan wallet browser)?
+ *    → Ya: tampilkan modal deep link (buka di MetaMask/Bitget app)
+ *    → Tidak (desktop): tunggu 300ms untuk EIP-6963, lalu tampilkan modal install
+ */
 function connectWallet() {
   try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
 
@@ -307,7 +342,15 @@ function connectWallet() {
     return;
   }
 
-  // Tidak ada wallet sync — tunggu EIP-6963 late announce
+  // Tidak ada wallet sync
+  if (_isMobile() && !_isWalletBrowser()) {
+    // Mobile Chrome/Safari biasa — tampilkan deep link modal LANGSUNG
+    // tanpa delay karena kita tahu window.ethereum tidak akan muncul
+    _showMobileDeepLinkModal();
+    return;
+  }
+
+  // Desktop atau mobile wallet browser: tunggu EIP-6963 late announce
   const lbl = document.getElementById('wallet-btn-label');
   const origLabel = lbl ? lbl.innerHTML : '';
   if (lbl) lbl.innerHTML = '<span>Mendeteksi wallet...</span>';
@@ -323,6 +366,143 @@ function connectWallet() {
 function _processWallets(wallets) {
   if (wallets.length === 1) _connectWith(wallets[0]);
   else _showPickerModal(wallets);
+}
+
+// ── MOBILE DEEP LINK MODAL ────────────────────────────────────────────────────
+
+/**
+ * Modal khusus mobile Chrome/Safari.
+ *
+ * Ditampilkan saat user buka website di Chrome HP (bukan di dalam wallet app).
+ * Menawarkan dua jalur:
+ *
+ * A. Deep link ke wallet app yang terinstall
+ *    Klik tombol → OS mencoba membuka app → app navigasi ke URL ini
+ *    → window.ethereum tersedia → connect berjalan normal
+ *
+ * B. Install wallet jika belum ada
+ *
+ * Deep link format (standar resmi masing-masing wallet):
+ *   MetaMask : https://metamask.app.link/dapp/{hostname}
+ *   Bitget   : https://bkcode.vip/?action=dapp&url={encoded_url}
+ *   Trust    : https://link.trustwallet.com/open_url?url={encoded_url}
+ */
+function _showMobileDeepLinkModal() {
+  try { document.getElementById('mobile-deeplink-modal')?.remove(); } catch (_) {}
+
+  const metamaskLink = _buildDeepLink('metamask');
+  const bitgetLink   = _buildDeepLink('bitget');
+  const trustLink    = _buildDeepLink('trust');
+
+  const overlay = document.createElement('div');
+  overlay.id        = 'mobile-deeplink-modal';
+  overlay.className = 'fixed inset-0 z-[10002] flex items-end justify-center bg-black/75 backdrop-blur-sm px-4 pb-4';
+  overlay.innerHTML = `
+    <div class="absolute inset-0" onclick="_closeMobileDeepLinkModal()"></div>
+    <div class="relative w-full max-w-sm bg-[#0F172A] border border-white/10 rounded-3xl shadow-2xl z-10 overflow-hidden">
+
+      <!-- Handle -->
+      <div class="flex justify-center pt-4 pb-2">
+        <div class="w-10 h-1 bg-white/20 rounded-full"></div>
+      </div>
+
+      <!-- Header -->
+      <div class="px-6 pt-2 pb-5 border-b border-white/5">
+        <h3 class="text-lg font-black text-white">Buka di Wallet App</h3>
+        <p class="text-slate-400 text-xs mt-1">
+          Pilih wallet yang terinstall di HP kamu. App akan otomatis membuka halaman ini.
+        </p>
+      </div>
+
+      <!-- Deep link buttons -->
+      <div class="p-4 space-y-3">
+
+        <!-- MetaMask -->
+        <a href="${metamaskLink}" onclick="_closeMobileDeepLinkModal()"
+          class="flex items-center gap-4 px-4 py-4 rounded-2xl
+                 bg-orange-500/10 border border-orange-500/20
+                 hover:bg-orange-500/20 hover:border-orange-500/50
+                 active:scale-95 transition-all cursor-pointer group">
+          <span class="text-3xl flex-shrink-0">🦊</span>
+          <div class="flex-1 min-w-0">
+            <p class="font-bold text-white">MetaMask</p>
+            <p class="text-slate-500 text-xs">Buka dApp di MetaMask Mobile</p>
+          </div>
+          <span class="text-orange-400 font-bold text-lg flex-shrink-0">›</span>
+        </a>
+
+        <!-- Bitget Wallet -->
+        <a href="${bitgetLink}" onclick="_closeMobileDeepLinkModal()"
+          class="flex items-center gap-4 px-4 py-4 rounded-2xl
+                 bg-sky-500/10 border border-sky-500/20
+                 hover:bg-sky-500/20 hover:border-sky-500/50
+                 active:scale-95 transition-all cursor-pointer group">
+          <span class="text-3xl flex-shrink-0">💼</span>
+          <div class="flex-1 min-w-0">
+            <p class="font-bold text-white">Bitget Wallet</p>
+            <p class="text-slate-500 text-xs">Buka dApp di Bitget Wallet</p>
+          </div>
+          <span class="text-sky-400 font-bold text-lg flex-shrink-0">›</span>
+        </a>
+
+        <!-- Trust Wallet -->
+        <a href="${trustLink}" onclick="_closeMobileDeepLinkModal()"
+          class="flex items-center gap-4 px-4 py-4 rounded-2xl
+                 bg-blue-500/10 border border-blue-500/20
+                 hover:bg-blue-500/20 hover:border-blue-500/50
+                 active:scale-95 transition-all cursor-pointer group">
+          <span class="text-3xl flex-shrink-0">🛡️</span>
+          <div class="flex-1 min-w-0">
+            <p class="font-bold text-white">Trust Wallet</p>
+            <p class="text-slate-500 text-xs">Buka dApp di Trust Wallet</p>
+          </div>
+          <span class="text-blue-400 font-bold text-lg flex-shrink-0">›</span>
+        </a>
+
+      </div>
+
+      <!-- Divider + belum punya wallet -->
+      <div class="px-4 pb-4">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="flex-1 h-px bg-white/10"></div>
+          <span class="text-slate-600 text-xs">Belum punya wallet?</span>
+          <div class="flex-1 h-px bg-white/10"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <a href="https://metamask.io/download/" target="_blank" rel="noopener"
+            class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl
+                   bg-white/5 border border-white/10 text-slate-300 text-xs font-semibold
+                   active:scale-95 transition-all">
+            🦊 Install MetaMask
+          </a>
+          <a href="https://web3.bitget.com/en/wallet-download" target="_blank" rel="noopener"
+            class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl
+                   bg-white/5 border border-white/10 text-slate-300 text-xs font-semibold
+                   active:scale-95 transition-all">
+            💼 Install Bitget
+          </a>
+        </div>
+      </div>
+
+      <div class="px-6 pb-5 pt-1">
+        <p class="text-slate-600 text-xs text-center leading-relaxed">
+          Setelah app terbuka, halaman ini akan dimuat di dalam browser wallet kamu secara otomatis.
+        </p>
+      </div>
+
+      <button onclick="_closeMobileDeepLinkModal()"
+        class="w-full py-3 text-slate-500 hover:text-white text-sm transition border-t border-white/5">
+        Tutup
+      </button>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+}
+
+function _closeMobileDeepLinkModal() {
+  try { document.getElementById('mobile-deeplink-modal')?.remove(); } catch (_) {}
+  document.body.style.overflow = '';
 }
 
 // ── PICKER MODAL ──────────────────────────────────────────────────────────────
@@ -390,7 +570,6 @@ function _closePickerModal() {
 async function _connectWith(wallet) {
   const { name, provider } = wallet;
 
-  // Loading state di desktop dan mobile
   const btn    = document.getElementById('wallet-btn');
   const lbl    = document.getElementById('wallet-btn-label');
   const btnMob = document.getElementById('wallet-btn-mobile');
@@ -416,10 +595,9 @@ async function _connectWith(wallet) {
 
     _attachListeners(provider);
 
-    // ── Render SEMUA tombol secara SYNCHRONOUS ─────────────────────────────
+    // Render SEMUA tombol secara SYNCHRONOUS
     const short = shortenAddress(accounts[0]);
-    _renderConnected(short); // update desktop + mobile + badge sekaligus
-    // ─────────────────────────────────────────────────────────────────────
+    _renderConnected(short);
 
     if (chainId !== SUPPORTED_CHAIN_ID) {
       showToast(`${name} terhubung, tapi jaringan bukan Mainnet. Ganti ke ${SUPPORTED_CHAIN_NAME} ya! ⚠️`, 'warning');
@@ -432,7 +610,7 @@ async function _connectWith(wallet) {
     walletState.address     = null;
     _activeProvider         = null;
     _activeWalletName       = '';
-    _renderDisconnected(); // reset desktop + mobile sekaligus
+    _renderDisconnected();
 
     const code = err?.code;
     if (code === 4001 || code === 'ACTION_REJECTED') showToast('Koneksi dibatalkan 😅', 'warning');
@@ -459,7 +637,7 @@ function _clearState() {
 
 function disconnectWallet() {
   const { prev, name } = _clearState();
-  _renderDisconnected(); // reset desktop + mobile sekaligus
+  _renderDisconnected();
   showToast(`${name ? name + ' ' : ''}${shortenAddress(prev)} disconnect. 👋`, 'info');
 }
 
@@ -481,7 +659,7 @@ function _attachListeners(provider) {
           walletState.address = accounts[0];
           sessionStorage.setItem('wallet_address', accounts[0]);
           const short = shortenAddress(accounts[0]);
-          _renderConnected(short); // update desktop + mobile
+          _renderConnected(short);
           showToast(`Akun berganti ke ${short} 🔄`, 'info');
         }
       } catch (_) {}
@@ -499,7 +677,7 @@ function _attachListeners(provider) {
   } catch (_) {}
 }
 
-// ── MODAL: TIDAK ADA WALLET ───────────────────────────────────────────────────
+// ── MODAL: TIDAK ADA WALLET (desktop) ────────────────────────────────────────
 
 function _showNoWalletModal() {
   try { document.getElementById('no-wallet-modal')?.remove(); } catch (_) {}
@@ -589,7 +767,7 @@ async function restoreSession() {
     walletState.isConnected = true;
 
     _attachListeners(found.provider);
-    _renderConnected(shortenAddress(savedAddr)); // update desktop + mobile
+    _renderConnected(shortenAddress(savedAddr));
     showToast(`${found.name} ${shortenAddress(savedAddr)} terhubung kembali 🔗`, 'success');
 
   } catch (_) {
@@ -604,7 +782,6 @@ async function restoreSession() {
 
 function initWallet() {
   try {
-    // Pasang event ke semua tombol wallet (desktop + mobile)
     ['wallet-btn', 'wallet-btn-mobile'].forEach(id => {
       try {
         const el = document.getElementById(id);
