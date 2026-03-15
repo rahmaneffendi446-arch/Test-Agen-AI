@@ -1,36 +1,36 @@
 /**
- * wallet.js — KriptoEdu Wallet Connector (Simple & Stable)
+ * wallet.js: KriptoEdu Wallet Connector (Simple & Stable)
  * RAH-15: Rollback ke sistem sederhana berbasis window.ethereum
  *
  * Cara kerja:
  *  - Deteksi window.ethereum yang di-inject MetaMask (desktop extension
  *    maupun MetaMask in-app browser di HP)
- *  - Jika tidak ada → tampilkan pilihan: buka MetaMask app atau info
+ *  - Jika tidak ada, tampilkan pilihan: buka MetaMask app atau info
  *  - Tidak ada dependency eksternal, tidak ada CDN tambahan
  *  - Ringan, cepat, tidak bisa error karena CDN gagal load
  *
  * Kompatibel dengan:
  *  ✓ MetaMask Desktop (Chrome, Firefox, Brave)
- *  ✓ MetaMask Mobile — built-in browser ("Browser" tab di app)
+ *  ✓ MetaMask Mobile, built-in browser ("Browser" tab di app)
  *  ✓ Trust Wallet built-in browser
  *  ✓ Brave Wallet (inject window.ethereum)
  *  ✓ Coinbase Wallet built-in browser
  */
 
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
+// CONFIG
 const SUPPORTED_CHAIN_ID   = '0x1';
 const SUPPORTED_CHAIN_NAME = 'Ethereum Mainnet';
 
-// ─── STATE (dibaca oleh donation.js — jangan rename) ──────────────────────────
+// STATE (dibaca oleh donation.js, jangan rename)
 let walletState = {
   address:     null,
   chainId:     null,
   isConnected: false,
 };
 
-// ─── UTILS ───────────────────────────────────────────────────────────────────
+// UTILS
 
-/** Format 0x1234567890abcd → 0x1234...abcd */
+/** Format 0x1234567890abcd ke 0x1234...abcd */
 function shortenAddress(addr) {
   if (!addr) return '';
   return addr.slice(0, 6) + '...' + addr.slice(-4);
@@ -41,7 +41,7 @@ function hasProvider() {
   return typeof window.ethereum !== 'undefined';
 }
 
-// ─── TOAST ───────────────────────────────────────────────────────────────────
+// TOAST
 
 let _toastTimer;
 
@@ -79,7 +79,7 @@ function hideToast() {
   t.style.pointerEvents = 'none';
 }
 
-// ─── UI UPDATE ────────────────────────────────────────────────────────────────
+// UI UPDATE
 
 function updateWalletUI() {
   const btn   = document.getElementById('wallet-btn');
@@ -89,7 +89,7 @@ function updateWalletUI() {
   if (!btn) return;
 
   if (walletState.isConnected && walletState.address) {
-    // ── CONNECTED ──
+    // CONNECTED
     btn.className = [
       'hidden md:inline-flex items-center gap-2',
       'bg-green-500/15 hover:bg-red-500/15',
@@ -108,7 +108,7 @@ function updateWalletUI() {
       badge.classList.remove('hidden');
     }
   } else {
-    // ── DISCONNECTED ──
+    // DISCONNECTED
     btn.className = 'hidden md:inline-flex items-center gap-2 bg-crypto-purple hover:bg-purple-500 text-white text-sm font-semibold px-4 py-2 rounded-full transition-all duration-200 cursor-pointer';
     if (label) label.innerHTML = '<span>🔗 Connect Wallet</span>';
     if (dot)   dot.className   = 'w-2 h-2 rounded-full bg-white/50';
@@ -116,14 +116,13 @@ function updateWalletUI() {
   }
 }
 
-// ─── NO-WALLET MODAL ──────────────────────────────────────────────────────────
+// NO-WALLET MODAL
 /**
- * Muncul saat window.ethereum tidak ada — kasih tahu user cara connect:
+ * Muncul saat window.ethereum tidak ada. Kasih tahu user cara connect:
  *   1. Buka web ini di dalam browser MetaMask app
  *   2. Install MetaMask extension (desktop)
  */
 function showNoWalletModal() {
-  // Hapus modal lama kalau ada
   const existing = document.getElementById('no-wallet-modal');
   if (existing) existing.remove();
 
@@ -134,24 +133,21 @@ function showNoWalletModal() {
     <div class="absolute inset-0" onclick="document.getElementById('no-wallet-modal').remove(); document.body.style.overflow='';"></div>
     <div class="relative w-full max-w-sm bg-[#0F172A] border border-white/10 rounded-3xl shadow-2xl p-7 z-10">
 
-      <!-- Handle -->
       <div class="flex justify-center mb-5"><div class="w-10 h-1 bg-white/20 rounded-full"></div></div>
 
-      <!-- Header -->
       <div class="text-center mb-6">
         <div class="text-5xl mb-3">🦊</div>
         <h3 class="text-xl font-black mb-1">Wallet Belum Terdeteksi</h3>
         <p class="text-slate-400 text-sm">Pilih salah satu cara di bawah ini untuk connect wallet.</p>
       </div>
 
-      <!-- Option 1: Buka di MetaMask browser -->
       <div class="bg-[#1E293B] rounded-2xl p-5 mb-3 border border-orange-500/20">
         <div class="flex items-center gap-3 mb-3">
           <span class="text-2xl">📱</span>
           <p class="font-bold text-orange-300">Pakai HP? Buka via MetaMask App</p>
         </div>
         <p class="text-slate-400 text-xs leading-relaxed mb-4">
-          Buka aplikasi <strong class="text-white">MetaMask</strong> di HP kamu → tap tab <strong class="text-white">"Browser"</strong> → ketik alamat website ini.
+          Buka aplikasi <strong class="text-white">MetaMask</strong> di HP kamu, tap tab <strong class="text-white">"Browser"</strong>, lalu ketik alamat website ini.
           MetaMask akan otomatis menghubungkan wallet kamu.
         </p>
         <div class="bg-crypto-dark rounded-xl px-4 py-2 border border-white/5 flex items-center gap-2">
@@ -166,7 +162,6 @@ function showNoWalletModal() {
         </button>
       </div>
 
-      <!-- Option 2: Install MetaMask desktop -->
       <div class="bg-[#1E293B] rounded-2xl p-5 mb-4 border border-white/5">
         <div class="flex items-center gap-3 mb-3">
           <span class="text-2xl">💻</span>
@@ -200,16 +195,14 @@ function copyUrlToClipboard() {
   });
 }
 
-// ─── CONNECT ─────────────────────────────────────────────────────────────────
+// CONNECT
 
 async function connectWallet() {
-  // Tidak ada provider → kasih panduan ke user
   if (!hasProvider()) {
     showNoWalletModal();
     return;
   }
 
-  // Disable tombol sementara
   const btn = document.getElementById('wallet-btn');
   if (btn) {
     btn.disabled = true;
@@ -218,7 +211,7 @@ async function connectWallet() {
   }
 
   try {
-    // Minta akses akun — akan buka popup MetaMask
+    // Minta akses akun, akan buka popup MetaMask
     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
 
     if (!accounts || accounts.length === 0) {
@@ -231,14 +224,13 @@ async function connectWallet() {
     walletState.chainId     = chainId;
     walletState.isConnected = true;
 
-    // Simpan session
     sessionStorage.setItem('wallet_connected', 'true');
     sessionStorage.setItem('wallet_address',   accounts[0]);
 
     updateWalletUI();
 
     if (chainId !== SUPPORTED_CHAIN_ID) {
-      showToast(`Wallet terhubung — tapi kamu di jaringan lain. Ganti ke ${SUPPORTED_CHAIN_NAME} ya! ⚠️`, 'warning');
+      showToast(`Wallet terhubung, tapi kamu di jaringan lain. Ganti ke ${SUPPORTED_CHAIN_NAME} ya! ⚠️`, 'warning');
     } else {
       showToast(`✅ Wallet terhubung! ${shortenAddress(accounts[0])}`, 'success');
     }
@@ -247,7 +239,6 @@ async function connectWallet() {
     if (err.code === 4001) {
       showToast('Koneksi dibatalkan 😅', 'warning');
     } else if (err.code === -32002) {
-      // Popup MetaMask sudah terbuka tapi belum direspons user
       showToast('Buka MetaMask dan setujui permintaan koneksi 🦊', 'info');
     } else {
       showToast('Gagal connect: ' + (err.message || 'Error tidak diketahui'), 'error');
@@ -258,7 +249,7 @@ async function connectWallet() {
   }
 }
 
-// ─── DISCONNECT ──────────────────────────────────────────────────────────────
+// DISCONNECT
 
 function disconnectWallet() {
   const prev = walletState.address;
@@ -274,7 +265,7 @@ function disconnectWallet() {
   showToast(`Wallet ${shortenAddress(prev)} disconnect. 👋`, 'info');
 }
 
-// ─── BUTTON CLICK HANDLER ─────────────────────────────────────────────────────
+// BUTTON CLICK HANDLER
 
 function handleWalletButtonClick() {
   if (walletState.isConnected) {
@@ -284,12 +275,11 @@ function handleWalletButtonClick() {
   }
 }
 
-// ─── EVENT LISTENERS ──────────────────────────────────────────────────────────
+// EVENT LISTENERS
 
 function setupProviderListeners() {
   if (!hasProvider()) return;
 
-  // Akun berganti (user switch akun di MetaMask)
   window.ethereum.on('accountsChanged', (accounts) => {
     if (!accounts || accounts.length === 0) {
       disconnectWallet();
@@ -301,7 +291,6 @@ function setupProviderListeners() {
     }
   });
 
-  // Jaringan berganti
   window.ethereum.on('chainChanged', (chainId) => {
     walletState.chainId = chainId;
     if (chainId !== SUPPORTED_CHAIN_ID) {
@@ -312,7 +301,7 @@ function setupProviderListeners() {
   });
 }
 
-// ─── RESTORE SESSION ──────────────────────────────────────────────────────────
+// RESTORE SESSION
 
 async function restoreSession() {
   const wasSaved  = sessionStorage.getItem('wallet_connected');
@@ -321,7 +310,7 @@ async function restoreSession() {
   if (!wasSaved || !savedAddr || !hasProvider()) return;
 
   try {
-    // eth_accounts TIDAK memunculkan popup — hanya cek apakah sudah authorized
+    // eth_accounts TIDAK memunculkan popup. Hanya cek apakah sudah authorized
     const accounts = await window.ethereum.request({ method: 'eth_accounts' });
 
     if (accounts && accounts.length > 0 &&
@@ -333,7 +322,6 @@ async function restoreSession() {
       updateWalletUI();
       showToast(`Wallet ${shortenAddress(accounts[0])} terhubung kembali 🔗`, 'success');
     } else {
-      // Session tidak valid, bersihkan
       sessionStorage.removeItem('wallet_connected');
       sessionStorage.removeItem('wallet_address');
     }
@@ -343,10 +331,9 @@ async function restoreSession() {
   }
 }
 
-// ─── INIT ─────────────────────────────────────────────────────────────────────
+// INIT
 
 function initWallet() {
-  // Pasang event listener ke tombol wallet (desktop + mobile)
   ['wallet-btn', 'wallet-btn-mobile'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', handleWalletButtonClick);

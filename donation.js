@@ -1,10 +1,10 @@
 /**
- * donation.js — KriptoEdu Crypto Tip Jar
+ * donation.js: KriptoEdu Crypto Tip Jar
  * Update RAH-15: sendDonation() pakai window.ethereum.request langsung
  * (kompatibel dengan wallet.js versi simpel)
  */
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────
+// CONFIG
 const DONATION_RECIPIENT = '0x715d4eB4a21e2e50f4F0083e3C05D1042B8FaC05';
 const RECIPIENT_LABEL    = 'KriptoEdu Fund';
 const DONATION_PRESETS   = [
@@ -13,12 +13,12 @@ const DONATION_PRESETS   = [
   { label: '🚀 Super', eth: '0.01',  desc: '~Rp 40rb' },
 ];
 
-// ─── STATE ────────────────────────────────────────────────────────────────
+// STATE
 let donationHistory = [];
 let selectedAmount  = DONATION_PRESETS[0].eth;
 let isModalOpen     = false;
 
-// ─── UTILS ────────────────────────────────────────────────────────────────
+// UTILS
 
 function ethToHex(eth) {
   const wei = BigInt(Math.round(parseFloat(eth) * 1e18));
@@ -34,7 +34,7 @@ function isWalletConnected() {
   return typeof walletState !== 'undefined' && walletState.isConnected && !!walletState.address;
 }
 
-// ─── MODAL ────────────────────────────────────────────────────────────────
+// MODAL
 
 function openDonationModal() {
   const modal = document.getElementById('donation-modal');
@@ -58,7 +58,7 @@ function closeDonationModal() {
   resetTxStatus();
 }
 
-// ─── PRESETS ────────────────────────────────────────────────────────────────
+// PRESETS
 
 function renderPresets() {
   const c = document.getElementById('donation-presets');
@@ -97,7 +97,7 @@ function onCustomInput(val) {
   updateDonateButton();
 }
 
-// ─── DONATE BUTTON STATE ─────────────────────────────────────────────────
+// DONATE BUTTON STATE
 
 function updateDonateButton() {
   const btn  = document.getElementById('donate-submit-btn');
@@ -116,7 +116,7 @@ function updateDonateButton() {
   }
 }
 
-// ─── SEND TRANSACTION ────────────────────────────────────────────────────
+// SEND TRANSACTION
 
 async function sendDonation() {
   if (!isWalletConnected()) {
@@ -133,17 +133,16 @@ async function sendDonation() {
     return;
   }
 
-  setTxStatus('pending', `Mengirim ${parsedAmt} ETH… Konfirmasi di MetaMask kamu 🦊`);
+  setTxStatus('pending', `Mengirim ${parsedAmt} ETH... Konfirmasi di MetaMask kamu 🦊`);
 
   try {
-    // Kirim langsung via window.ethereum (no ethers needed)
     const txHash = await window.ethereum.request({
       method: 'eth_sendTransaction',
       params: [{
         from:  walletState.address,
         to:    DONATION_RECIPIENT,
         value: ethToHex(parsedAmt.toString()),
-        gas:   '0x5208', // 21000 gas — standard ETH transfer
+        gas:   '0x5208', // 21000 gas, standard ETH transfer
       }],
     });
 
@@ -171,7 +170,7 @@ async function sendDonation() {
   }
 }
 
-// ─── TX STATUS ──────────────────────────────────────────────────────────────
+// TX STATUS
 
 function setTxStatus(status, data = '', amount = 0) {
   const box = document.getElementById('tx-status-box');
@@ -194,7 +193,7 @@ function resetTxStatus() {
   if (box) { box.innerHTML = ''; box.classList.add('hidden'); }
 }
 
-// ─── HISTORY ────────────────────────────────────────────────────────────────
+// HISTORY
 
 function renderHistory() {
   const list = document.getElementById('donation-history');
@@ -219,7 +218,7 @@ function updateDonationCounter(count) {
   if (el) el.textContent = count;
 }
 
-// ─── CONFETTI ──────────────────────────────────────────────────────────────
+// CONFETTI
 
 function launchConfetti() {
   const colors = ['#F59E0B','#7C3AED','#1DA1F2','#10B981','#F472B6'];
@@ -247,7 +246,7 @@ function launchConfetti() {
   draw();
 }
 
-// ─── INJECT MODAL ────────────────────────────────────────────────────
+// INJECT MODAL
 
 function injectDonationModal() {
   if (document.getElementById('donation-modal')) return;
