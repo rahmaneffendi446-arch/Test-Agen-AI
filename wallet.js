@@ -30,10 +30,14 @@ let walletState = {
 
 // UTILS
 
-/** Format 0x1234567890abcd ke 0x1234...abcd */
+/**
+ * Singkat alamat wallet jadi format yang rapi:
+ * 6 karakter awal + '...' + 4 karakter akhir
+ * Contoh: 0xAbCd1234...5678
+ */
 function shortenAddress(addr) {
-  if (!addr) return '';
-  return addr.slice(0, 6) + '...' + addr.slice(-4);
+  if (!addr || addr.length < 10) return addr || '';
+  return addr.substring(0, 6) + '...' + addr.substring(addr.length - 4);
 }
 
 /** Apakah ada wallet provider yang di-inject? (MetaMask, Trust, Brave, dll) */
@@ -81,15 +85,55 @@ function hideToast() {
 
 // UI UPDATE
 
-function updateWalletUI() {
+/**
+ * Refresh tampilan wallet di seluruh UI.
+ *
+ * Fungsi ini async agar bisa mengambil alamat terkini langsung
+ * dari provider (eth_accounts) setiap kali dipanggil.
+ * Dengan begitu, tombol wallet selalu menampilkan alamat asli
+ * yang sedang aktif di MetaMask, dan otomatis berubah jika
+ * user ganti akun.
+ *
+ * Format alamat: 6 karakter awal + '...' + 4 karakter akhir
+ * Contoh: 0xAbCd12...5678
+ */
+async function updateWalletUI() {
   const btn   = document.getElementById('wallet-btn');
   const label = document.getElementById('wallet-btn-label');
   const dot   = document.getElementById('wallet-btn-dot');
   const badge = document.getElementById('wallet-address-badge');
   if (!btn) return;
 
+  // ── Ambil alamat terkini langsung dari provider ──────────────────
+  // eth_accounts tidak memunculkan popup, hanya query akun aktif.
+  // Ini memastikan alamat yang ditampilkan selalu fresh dan sinkron
+  // dengan wallet yang sedang dipakai user saat itu.
+  if (walletState.isConnected && hasProvider()) {
+    try {
+      const liveAccounts = await window.ethereum.request({ method: 'eth_accounts' });
+
+      if (liveAccounts && liveAccounts.length > 0) {
+        // Update state dengan alamat paling baru dari provider
+        walletState.address = liveAccounts[0];
+        sessionStorage.setItem('wallet_address', liveAccounts[0]);
+      } else {
+        // Provider tidak punya akun aktif (user lock MetaMask / cabut izin)
+        // Anggap disconnect agar UI konsisten
+        walletState.isConnected = false;
+        walletState.address     = null;
+        sessionStorage.removeItem('wallet_connected');
+        sessionStorage.removeItem('wallet_address');
+      }
+    } catch (_) {
+      // Gagal fetch dari provider, lanjut render dengan walletState yang ada
+    }
+  }
+
   if (walletState.isConnected && walletState.address) {
-    // CONNECTED
+    // Format singkat: substring(0,6) + '...' + substring(length-4)
+    const short = shortenAddress(walletState.address);
+
+    // ── CONNECTED ─────────────────────────────────────────────────────
     btn.className = [
       'hidden md:inline-flex items-center gap-2',
       'bg-green-500/15 hover:bg-red-500/15',
@@ -98,17 +142,21 @@ function updateWalletUI() {
       'text-sm font-semibold px-4 py-2 rounded-full',
       'transition-all duration-200 cursor-pointer group',
     ].join(' ');
+
     if (label) label.innerHTML = `
-      <span class="group-hover:hidden">${shortenAddress(walletState.address)}</span>
+      <span class="group-hover:hidden">${short}</span>
       <span class="hidden group-hover:inline">Disconnect</span>`;
+
     if (dot) dot.className = 'w-2 h-2 rounded-full bg-green-400 group-hover:bg-red-400 transition-colors animate-pulse';
+
     if (badge) {
-      badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span><span>${shortenAddress(walletState.address)}</span>`;
+      badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span><span>${short}</span>`;
       badge.className = 'mt-6 inline-flex items-center gap-2 bg-green-500/10 border border-green-500/30 text-green-400 text-sm font-mono px-4 py-2 rounded-full';
       badge.classList.remove('hidden');
     }
+
   } else {
-    // DISCONNECTED
+    // ── DISCONNECTED ──────────────────────────────────────────────────
     btn.className = 'hidden md:inline-flex items-center gap-2 bg-crypto-purple hover:bg-purple-500 text-white text-sm font-semibold px-4 py-2 rounded-full transition-all duration-200 cursor-pointer';
     if (label) label.innerHTML = '<span>🔗 Connect Wallet</span>';
     if (dot)   dot.className   = 'w-2 h-2 rounded-full bg-white/50';
@@ -220,6 +268,7 @@ async function connectWallet() {
 
     const chainId = await window.ethereum.request({ method: 'eth_chainId' });
 
+    // Simpan alamat asli dari provider ke walletState
     walletState.address     = accounts[0];
     walletState.chainId     = chainId;
     walletState.isConnected = true;
@@ -227,7 +276,8 @@ async function connectWallet() {
     sessionStorage.setItem('wallet_connected', 'true');
     sessionStorage.setItem('wallet_address',   accounts[0]);
 
-    updateWalletUI();
+    // updateWalletUI async: akan fetch ulang dari provider dan tampilkan alamat asli
+    await updateWalletUI();
 
     if (chainId !== SUPPORTED_CHAIN_ID) {
       showToast(`Wallet terhubung, tapi kamu di jaringan lain. Ganti ke ${SUPPORTED_CHAIN_NAME} ya! ⚠️`, 'warning');
@@ -280,10 +330,13 @@ function handleWalletButtonClick() {
 function setupProviderListeners() {
   if (!hasProvider()) return;
 
+  // Akun berganti: user switch akun di MetaMask
+  // updateWalletUI akan otomatis fetch alamat baru dari provider
   window.ethereum.on('accountsChanged', (accounts) => {
     if (!accounts || accounts.length === 0) {
       disconnectWallet();
     } else {
+      // Update state dulu, lalu biarkan updateWalletUI fetch dari provider
       walletState.address = accounts[0];
       sessionStorage.setItem('wallet_address', accounts[0]);
       updateWalletUI();
@@ -316,10 +369,14 @@ async function restoreSession() {
     if (accounts && accounts.length > 0 &&
         accounts[0].toLowerCase() === savedAddr.toLowerCase()) {
       const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+
+      // Simpan alamat asli dari provider
       walletState.address     = accounts[0];
       walletState.chainId     = chainId;
       walletState.isConnected = true;
-      updateWalletUI();
+
+      // updateWalletUI akan fetch ulang dan tampilkan alamat live
+      await updateWalletUI();
       showToast(`Wallet ${shortenAddress(accounts[0])} terhubung kembali 🔗`, 'success');
     } else {
       sessionStorage.removeItem('wallet_connected');
